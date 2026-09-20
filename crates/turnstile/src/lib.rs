@@ -16,16 +16,16 @@ pub use pinnacle_core::{
     Request, Service, ServiceBuilder, ServiceExt, SessionIo,
 };
 pub use services::{
-    Ban, CookieChallenger, CookieChallengerService, Count, Detect, Detector, Forward,
+    Bannd, CookieChallenger, CookieChallengerService, Count, Detect, Detector, Forward,
     HeuristicDetector, Pass, Policy, PolicyDecision, PolicyEffect, PolicyEngine, PolicySet,
     RiskVerdict, Rule, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH,
 };
 
 /// Default stack (outer → inner).
-pub const LAYERS: &[&str] = &["challenge", "ban", "count", "policy", "detector", "forward"];
+pub const LAYERS: &[&str] = &["challenge", "banned", "count", "policy", "detector", "forward"];
 
 /// Default stack (outer → inner):
-/// challenge → ban → count → policy → detector → forward
+/// challenge → banned → count → policy → detector → forward
 pub struct Turnstile {
     services: BoxCloneSyncService<Request, EdgeOutcome, Infallible>,
 }
@@ -45,7 +45,7 @@ impl Turnstile {
         // First `.layer` is outermost (tower::ServiceBuilder / Stack order).
         let services = ServiceBuilder::new()
             .layer(layer_service(CookieChallengerService::new(store.clone())))
-            .layer(layer_service(Ban::new(store.clone())))
+            .layer(layer_service(Bannd::new(store.clone())))
             .layer(layer_service(Count::new(store)))
             .layer(layer_service(Policy::new(policy)))
             .layer(layer_service(Detect::new(detector)))

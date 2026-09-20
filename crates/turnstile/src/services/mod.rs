@@ -1,6 +1,6 @@
 //! Tower service implementations.
 
-mod ban;
+mod bannd;
 mod challenge;
 mod count;
 mod detector;
@@ -8,7 +8,7 @@ mod forward;
 mod pass;
 mod policy;
 
-pub use ban::Ban;
+pub use bannd::Bannd;
 pub use challenge::{
     CookieChallenger, CookieChallengerService, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH,
 };

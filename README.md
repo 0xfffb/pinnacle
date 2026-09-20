@@ -8,7 +8,7 @@
 
 ```
 [1] challenge
-[2] ban
+[2] banned
 [3] count
 [4] policy
 [5] detector

@@ -52,7 +52,7 @@ impl<L, S> LayerSvc<L, S> {
     }
 }
 
-/// [`Layer`] factory: `.layer(layer_service(Ban::new(store)))`
+/// [`Layer`] factory: `.layer(layer_service(Bannd::new(store)))`
 #[derive(Clone)]
 pub struct LayerServiceLayer<L> {
     logic: L,

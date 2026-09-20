@@ -7,18 +7,18 @@ use pinnacle_store::Store;
 use crate::EdgeOutcome;
 
 #[derive(Clone)]
-pub struct Ban {
+pub struct Bannd {
     store: Arc<dyn Store>,
 }
 
-impl Ban {
+impl Bannd {
     pub fn new(store: Arc<dyn Store>) -> Self {
         Self { store }
     }
 }
 
 #[async_trait]
-impl LayerService for Ban {
+impl LayerService for Bannd {
     type Request = Request;
     type Response = EdgeOutcome;
 
