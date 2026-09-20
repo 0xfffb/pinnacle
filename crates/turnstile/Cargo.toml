@@ -1,0 +1,15 @@
+[package]
+name = "pinnacle-turnstile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Anti-bot turnstile: policy, detector, challenge orchestration"
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+pinnacle-core = { path = "../core" }
+pinnacle-store = { path = "../store" }

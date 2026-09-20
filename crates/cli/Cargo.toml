@@ -1,0 +1,21 @@
+[package]
+name = "pinnacle-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI entrypoint for Pinnacle"
+
+[[bin]]
+name = "pinnacle"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+pingora = { version = "0.9", features = ["proxy"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pinnacle-core = { path = "../core" }
+pinnacle-turnstile = { path = "../turnstile" }
+pinnacle-gateway = { path = "../gateway" }

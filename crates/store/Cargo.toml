@@ -1,0 +1,9 @@
+[package]
+name = "pinnacle-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Session, ban, and counter storage for Pinnacle"
+
+[dependencies]
+pinnacle-core = { path = "../core" }

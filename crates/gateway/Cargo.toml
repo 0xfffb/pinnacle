@@ -1,0 +1,15 @@
+[package]
+name = "pinnacle-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pingora-based anti-bot gateway for Pinnacle"
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+http = "1"
+pingora = { version = "0.9", features = ["proxy"] }
+tracing = "0.1"
+pinnacle-core = { path = "../core" }
+pinnacle-turnstile = { path = "../turnstile" }
