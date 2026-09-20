@@ -11,14 +11,14 @@ use tracing::info;
 
 pub use layers::{BanLayer, ChallengeLayer, CountLayer, DetectorLayer, PassLayer, PolicyLayer};
 pub use outcome::EdgeOutcome;
+pub use pinnacle_core::{
+    Action, BoxCloneSyncService, Context, Decision, Layer, Request, Service, ServiceBuilder,
+    ServiceExt, SessionIo,
+};
 pub use services::{
     CookieChallenger, CookieChallengerService, Detector, Forward, HeuristicDetector,
     PolicyDecision, PolicyEffect, PolicyEngine, PolicySet, RiskVerdict, Rule, COOKIE_CID,
     COOKIE_PASS, SCRIPT_PATH,
-};
-pub use pinnacle_core::{
-    Action, BoxCloneSyncService, Context, Decision, Layer, Request, Service, ServiceBuilder,
-    ServiceExt, SessionIo,
 };
 
 /// Default stack (outer → inner).
@@ -84,9 +84,8 @@ mod tests {
     #[test]
     fn script_served_at_path() {
         let ts = Turnstile::new(PolicySet::new(vec![]));
-        let req = Request::new(
-            Context::new(SCRIPT_PATH, "1.1.1.1", "Mozilla/5.0").with_method("GET"),
-        );
+        let req =
+            Request::new(Context::new(SCRIPT_PATH, "1.1.1.1", "Mozilla/5.0").with_method("GET"));
         let out = futures::executor::block_on(ts.call(req));
         match out {
             EdgeOutcome::Respond {
@@ -117,7 +116,9 @@ mod tests {
                 assert!(content_type.contains("html"));
                 assert!(String::from_utf8_lossy(&body).contains(SCRIPT_PATH));
                 assert!(
-                    cookies.iter().any(|c| c.starts_with(&format!("{COOKIE_CID}="))),
+                    cookies
+                        .iter()
+                        .any(|c| c.starts_with(&format!("{COOKIE_CID}="))),
                     "missing cid Set-Cookie: {cookies:?}"
                 );
             }

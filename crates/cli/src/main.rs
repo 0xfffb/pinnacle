@@ -6,8 +6,8 @@ use clap::Parser;
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 use config::Config;
 use pinnacle_gateway::Gateway;
@@ -62,10 +62,8 @@ impl Cli {
         let mut server = Server::new(Some(Opt::default())).unwrap();
         server.bootstrap();
 
-        let mut proxy = http_proxy_service(
-            &server.configuration,
-            Gateway::new(upstream, turnstile),
-        );
+        let mut proxy =
+            http_proxy_service(&server.configuration, Gateway::new(upstream, turnstile));
         proxy.add_tcp(&cfg.listen);
 
         server.add_service(proxy);

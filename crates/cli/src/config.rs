@@ -61,8 +61,13 @@ impl From<ActionName> for Action {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuleConfig {
-    IpAllow { ip: String },
-    IpBlock { ip: String, reason: String },
+    IpAllow {
+        ip: String,
+    },
+    IpBlock {
+        ip: String,
+        reason: String,
+    },
     PathPrefix {
         prefix: String,
         action: ActionName,
@@ -72,7 +77,9 @@ pub enum RuleConfig {
         max_count: u32,
         action: ActionName,
     },
-    UaAllowContains { needle: String },
+    UaAllowContains {
+        needle: String,
+    },
 }
 
 impl From<&RuleConfig> for Rule {
@@ -181,8 +188,7 @@ action = "challenge"
         );
 
         let policy = cfg.policy();
-        let ctx =
-            pinnacle_core::Context::new("/api/x", "203.0.113.1", "ua").with_count(11);
+        let ctx = pinnacle_core::Context::new("/api/x", "203.0.113.1", "ua").with_count(11);
         assert_eq!(policy.evaluate(&ctx).effect, PolicyEffect::Challenge);
     }
 }

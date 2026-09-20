@@ -19,7 +19,11 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(path: impl Into<String>, ip: impl Into<String>, user_agent: impl Into<String>) -> Self {
+    pub fn new(
+        path: impl Into<String>,
+        ip: impl Into<String>,
+        user_agent: impl Into<String>,
+    ) -> Self {
         let mut values = HashMap::new();
         values.insert(PATH.into(), path.into());
         values.insert(IP.into(), ip.into());

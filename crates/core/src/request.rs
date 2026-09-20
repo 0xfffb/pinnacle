@@ -42,7 +42,7 @@ impl Request {
             session: Some(unsafe {
                 std::mem::transmute::<*mut dyn SessionIo, *mut dyn SessionIo>(ptr)
             }),
-            cached: None
+            cached: None,
         }
     }
 

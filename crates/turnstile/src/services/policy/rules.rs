@@ -72,15 +72,25 @@ pub trait PolicyEngine: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rule {
-    IpAllow { ip: String },
-    IpBlock { ip: String, reason: String },
-    PathPrefix { prefix: String, action: Action },
+    IpAllow {
+        ip: String,
+    },
+    IpBlock {
+        ip: String,
+        reason: String,
+    },
+    PathPrefix {
+        prefix: String,
+        action: Action,
+    },
     PathRate {
         prefix: String,
         max_count: u32,
         action: Action,
     },
-    UaAllowContains { needle: String },
+    UaAllowContains {
+        needle: String,
+    },
 }
 
 impl Rule {
@@ -91,9 +101,10 @@ impl Rule {
         let request_count = ctx.get_u32(pinnacle_core::REQUEST_COUNT);
 
         match self {
-            Self::IpAllow { ip: allow } if ip == allow => {
-                Some(PolicyDecision::allow("ip_allow", format!("allowlisted_ip={allow}")))
-            }
+            Self::IpAllow { ip: allow } if ip == allow => Some(PolicyDecision::allow(
+                "ip_allow",
+                format!("allowlisted_ip={allow}"),
+            )),
             Self::IpBlock { ip: block, reason } if ip == block => {
                 Some(PolicyDecision::block("ip_block", reason.clone()))
             }
@@ -120,8 +131,7 @@ impl Rule {
                 max_count,
                 action,
             } if path.starts_with(prefix.as_str()) && request_count > *max_count => {
-                let detail =
-                    format!("path_prefix={prefix} count={request_count} max={max_count}");
+                let detail = format!("path_prefix={prefix} count={request_count} max={max_count}");
                 Some(match action {
                     Action::Allow => PolicyDecision::allow("path_rate", detail),
                     Action::Challenge => PolicyDecision::challenge("path_rate", detail),

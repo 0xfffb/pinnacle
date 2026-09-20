@@ -10,9 +10,16 @@ pub struct HeuristicDetector;
 impl HeuristicDetector {
     fn is_bot_like_ua(ua: &str) -> bool {
         let lower = ua.to_ascii_lowercase();
-        ["bot", "spider", "crawler", "scrapy", "curl", "python-requests"]
-            .iter()
-            .any(|marker| lower.contains(marker))
+        [
+            "bot",
+            "spider",
+            "crawler",
+            "scrapy",
+            "curl",
+            "python-requests",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
     }
 
     fn score_action(score: u8) -> Action {
@@ -71,11 +78,8 @@ mod tests {
 
     #[test]
     fn allows_normal_browser_traffic() {
-        let verdict = HeuristicDetector.evaluate(&Context::new(
-            "/api/items",
-            "203.0.113.10",
-            "Mozilla/5.0",
-        ));
+        let verdict =
+            HeuristicDetector.evaluate(&Context::new("/api/items", "203.0.113.10", "Mozilla/5.0"));
         assert_eq!(verdict.action, Action::Allow);
         assert!(verdict.score < 30);
     }
@@ -92,9 +96,8 @@ mod tests {
 
     #[test]
     fn blocks_high_rate_scrapers() {
-        let verdict = HeuristicDetector.evaluate(
-            &Context::new("/api/items", "203.0.113.10", "scrapy/2.11").with_count(200),
-        );
+        let verdict = HeuristicDetector
+            .evaluate(&Context::new("/api/items", "203.0.113.10", "scrapy/2.11").with_count(200));
         assert_eq!(verdict.action, Action::Block);
         assert!(verdict.score >= 70);
     }
