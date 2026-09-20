@@ -7,9 +7,6 @@ mod detector;
 mod forward;
 mod pass;
 mod policy;
-mod util;
-
-pub(crate) use util::{ok, EdgeFut};
 
 pub use ban::Ban;
 pub use challenge::{

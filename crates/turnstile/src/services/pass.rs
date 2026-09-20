@@ -1,36 +1,29 @@
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use pinnacle_core::{Request, Service, ServiceExt};
+use async_trait::async_trait;
+use pinnacle_core::{LayerService, Next, Request};
 use pinnacle_store::Store;
 
-use super::EdgeFut;
 use crate::EdgeOutcome;
 
 #[derive(Clone)]
-pub struct Pass<S> {
-    pub(crate) store: Arc<dyn Store>,
-    pub(crate) inner: S,
+pub struct Pass {
+    store: Arc<dyn Store>,
 }
 
-impl<S> Service<Request> for Pass<S>
-where
-    S: Service<Request, Response = EdgeOutcome, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    type Response = EdgeOutcome;
-    type Error = Infallible;
-    type Future = EdgeFut;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+impl Pass {
+    pub fn new(store: Arc<dyn Store>) -> Self {
+        Self { store }
     }
+}
 
-    fn call(&mut self, req: Request) -> Self::Future {
-        // Pass state is gated by Challenge; do not skip detector/policy.
+#[async_trait]
+impl LayerService for Pass {
+    type Request = Request;
+    type Response = EdgeOutcome;
+
+    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
         let _ = &self.store;
-        let inner = self.inner.clone();
-        Box::pin(async move { ServiceExt::oneshot(inner, req).await })
+        next.run(req).await
     }
 }

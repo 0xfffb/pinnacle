@@ -4,16 +4,14 @@
 //! - Verify success: `Set-Cookie: __pinnacle_pass=…`
 //! - Every normal request: validate `__pinnacle_pass` against the store
 
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
 
-use pinnacle_core::{Decision, Request, Service, ServiceExt};
+use async_trait::async_trait;
+use pinnacle_core::{Decision, LayerService, Next, Request};
 use pinnacle_store::{ChallengeSession, Store};
 use serde::Deserialize;
 use tracing::info;
 
-use crate::services::{ok, EdgeFut};
 use crate::EdgeOutcome;
 
 pub const SCRIPT_PATH: &str = "/__pinnacle/fp.js";
@@ -148,20 +146,18 @@ impl CookieChallenger {
     }
 }
 
-/// Tower service: script / verify / pass-cookie gate / map inner `Challenge`.
+/// Layer service: script / verify / pass-cookie gate / map inner `Challenge`.
 #[derive(Clone)]
-pub struct CookieChallengerService<S> {
+pub struct CookieChallengerService {
     store: Arc<dyn Store>,
     challenger: CookieChallenger,
-    inner: S,
 }
 
-impl<S> CookieChallengerService<S> {
-    pub fn new(store: Arc<dyn Store>, inner: S) -> Self {
+impl CookieChallengerService {
+    pub fn new(store: Arc<dyn Store>) -> Self {
         Self {
             store,
             challenger: CookieChallenger,
-            inner,
         }
     }
 
@@ -207,20 +203,12 @@ impl<S> CookieChallengerService<S> {
     }
 }
 
-impl<S> Service<Request> for CookieChallengerService<S>
-where
-    S: Service<Request, Response = EdgeOutcome, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
+#[async_trait]
+impl LayerService for CookieChallengerService {
+    type Request = Request;
     type Response = EdgeOutcome;
-    type Error = Infallible;
-    type Future = EdgeFut;
 
-    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, mut req: Request) -> Self::Future {
+    async fn call(&self, mut req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
         let method = req.ctx.get_or(pinnacle_core::METHOD, "GET").to_owned();
         let path = req.ctx.get_or(pinnacle_core::PATH, "").to_owned();
         let cookie = req.ctx.header("cookie").unwrap_or("").to_owned();
@@ -228,41 +216,32 @@ where
 
         if let Some(wire) = self.challenger.classify(&method, &path, &cookie) {
             match wire {
-                Wire::Script => return ok(self.script_response(&ip)),
+                Wire::Script => return self.script_response(&ip),
                 Wire::Verify => {
-                    let this = self.clone();
-                    return Box::pin(async move {
-                        let body = String::from_utf8_lossy(&req.take_body().await).into_owned();
-                        match this.check_verify(&ip, &body) {
-                            Ok(token) => {
-                                info!(%ip, ok = true, "verify");
-                                Ok(EdgeOutcome::empty(200)
-                                    .with_cookie(set_cookie(COOKIE_PASS, &token)))
-                            }
-                            Err(decision) => {
-                                info!(%ip, ok = false, "verify");
-                                let _ = decision;
-                                Ok(EdgeOutcome::text(403, "challenge_failed"))
-                            }
+                    let body = String::from_utf8_lossy(&req.take_body().await).into_owned();
+                    return match self.check_verify(&ip, &body) {
+                        Ok(token) => {
+                            info!(%ip, ok = true, "verify");
+                            EdgeOutcome::empty(200).with_cookie(set_cookie(COOKIE_PASS, &token))
                         }
-                    });
+                        Err(decision) => {
+                            info!(%ip, ok = false, "verify");
+                            let _ = decision;
+                            EdgeOutcome::text(403, "challenge_failed")
+                        }
+                    };
                 }
             }
         }
 
-        // Every request: validate pass cookie (not IP-only).
         if !self.has_valid_pass(&ip, &cookie) {
-            return ok(self.issue_page(&ip));
+            return self.issue_page(&ip);
         }
 
-        let this = self.clone();
-        let inner = self.inner.clone();
-        Box::pin(async move {
-            match ServiceExt::oneshot(inner, req).await? {
-                EdgeOutcome::Challenge => Ok(this.issue_page(&ip)),
-                other => Ok(other),
-            }
-        })
+        match next.run(req).await {
+            EdgeOutcome::Challenge => self.issue_page(&ip),
+            other => other,
+        }
     }
 }
 

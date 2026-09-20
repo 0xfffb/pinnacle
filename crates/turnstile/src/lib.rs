@@ -1,6 +1,5 @@
 //! Turnstile: tower-based anti-bot service stack.
 
-mod layers;
 mod outcome;
 mod services;
 
@@ -9,16 +8,17 @@ use std::sync::Arc;
 
 use tracing::info;
 
-pub use layers::{BanLayer, ChallengeLayer, CountLayer, DetectorLayer, PassLayer, PolicyLayer};
+use pinnacle_store::Store;
+
 pub use outcome::EdgeOutcome;
 pub use pinnacle_core::{
-    Action, BoxCloneSyncService, Context, Decision, Layer, Request, Service, ServiceBuilder,
-    ServiceExt, SessionIo,
+    layer_service, Action, BoxCloneSyncService, Context, Decision, Layer, LayerService, Next,
+    Request, Service, ServiceBuilder, ServiceExt, SessionIo,
 };
 pub use services::{
-    CookieChallenger, CookieChallengerService, Detector, Forward, HeuristicDetector,
-    PolicyDecision, PolicyEffect, PolicyEngine, PolicySet, RiskVerdict, Rule, COOKIE_CID,
-    COOKIE_PASS, SCRIPT_PATH,
+    Ban, CookieChallenger, CookieChallengerService, Count, Detect, Detector, Forward,
+    HeuristicDetector, Pass, Policy, PolicyDecision, PolicyEffect, PolicyEngine, PolicySet,
+    RiskVerdict, Rule, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH,
 };
 
 /// Default stack (outer → inner).
@@ -32,7 +32,9 @@ pub struct Turnstile {
 
 impl Turnstile {
     pub fn new(policy: PolicySet) -> Self {
-        let store = Arc::new(pinnacle_store::MemoryStore::new());
+        let store: Arc<dyn Store> = Arc::new(pinnacle_store::MemoryStore::new());
+        let policy: Arc<dyn PolicyEngine> = Arc::new(policy);
+        let detector: Arc<dyn Detector> = Arc::new(HeuristicDetector);
 
         let mut stack = String::from("turnstile stack (outer → inner)");
         for (i, layer) in LAYERS.iter().enumerate() {
@@ -42,11 +44,11 @@ impl Turnstile {
 
         // First `.layer` is outermost (tower::ServiceBuilder / Stack order).
         let services = ServiceBuilder::new()
-            .layer(ChallengeLayer::new(store.clone()))
-            .layer(BanLayer::new(store.clone()))
-            .layer(CountLayer::new(store.clone()))
-            .layer(PolicyLayer::new(Arc::new(policy)))
-            .layer(DetectorLayer::new(Arc::new(HeuristicDetector)))
+            .layer(layer_service(CookieChallengerService::new(store.clone())))
+            .layer(layer_service(Ban::new(store.clone())))
+            .layer(layer_service(Count::new(store)))
+            .layer(layer_service(Policy::new(policy)))
+            .layer(layer_service(Detect::new(detector)))
             .service(Forward);
 
         Self {
@@ -158,14 +160,12 @@ mod tests {
             other => panic!("expected verify 200, got {other:?}"),
         };
 
-        // Without pass cookie → challenged again.
         let no_cookie = Request::new(Context::new("/", "9.9.9.9", "Mozilla/5.0"));
         assert!(matches!(
             futures::executor::block_on(ts.call(no_cookie)),
             EdgeOutcome::Respond { status: 503, .. }
         ));
 
-        // With valid pass cookie → forward.
         let with_pass = Request::new(
             Context::new("/", "9.9.9.9", "Mozilla/5.0").with_header("cookie", pass_cookie),
         );

@@ -1,48 +1,39 @@
-//! Policy feature: service + rule engine.
+//! Policy feature: layer service + rule engine.
 
 mod rules;
 
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
 
-use pinnacle_core::{Action, Request, Service, ServiceExt};
+use async_trait::async_trait;
+use pinnacle_core::{Action, LayerService, Next, Request};
 
-use super::{ok, EdgeFut};
 use crate::EdgeOutcome;
 
 pub use rules::{PolicyDecision, PolicyEffect, PolicyEngine, PolicySet, Rule};
 
 #[derive(Clone)]
-pub struct Policy<S> {
-    pub(crate) policy: Arc<dyn PolicyEngine>,
-    pub(crate) inner: S,
+pub struct Policy {
+    policy: Arc<dyn PolicyEngine>,
 }
 
-impl<S> Service<Request> for Policy<S>
-where
-    S: Service<Request, Response = EdgeOutcome, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    type Response = EdgeOutcome;
-    type Error = Infallible;
-    type Future = EdgeFut;
-
-    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+impl Policy {
+    pub fn new(policy: Arc<dyn PolicyEngine>) -> Self {
+        Self { policy }
     }
+}
 
-    fn call(&mut self, req: Request) -> Self::Future {
+#[async_trait]
+impl LayerService for Policy {
+    type Request = Request;
+    type Response = EdgeOutcome;
+
+    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
         let decision = self.policy.evaluate(&req.ctx);
         match decision.action() {
-            Some(Action::Allow) => ok(EdgeOutcome::Forward),
-            Some(Action::Block) => ok(EdgeOutcome::text(403, decision.detail)),
-            // Bubble to outer Challenge layer (onion response path).
-            Some(Action::Challenge) => ok(EdgeOutcome::Challenge),
-            None => {
-                let inner = self.inner.clone();
-                Box::pin(async move { ServiceExt::oneshot(inner, req).await })
-            }
+            Some(Action::Allow) => EdgeOutcome::Forward,
+            Some(Action::Block) => EdgeOutcome::text(403, decision.detail),
+            Some(Action::Challenge) => EdgeOutcome::Challenge,
+            None => next.run(req).await,
         }
     }
 }

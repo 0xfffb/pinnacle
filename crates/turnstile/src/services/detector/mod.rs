@@ -1,14 +1,12 @@
-//! Detector feature: service + detector providers.
+//! Detector feature: layer service + detector providers.
 
 mod heuristic;
 
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
 
-use pinnacle_core::{Action, Context, Request, Service, ServiceExt};
+use async_trait::async_trait;
+use pinnacle_core::{Action, Context, LayerService, Next, Request};
 
-use super::{ok, EdgeFut};
 use crate::EdgeOutcome;
 
 pub use heuristic::HeuristicDetector;
@@ -35,39 +33,30 @@ pub trait Detector: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct Detect<S> {
-    pub(crate) detector: Arc<dyn Detector>,
-    pub(crate) inner: S,
+pub struct Detect {
+    detector: Arc<dyn Detector>,
 }
 
-impl<S> Service<Request> for Detect<S>
-where
-    S: Service<Request, Response = EdgeOutcome, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    type Response = EdgeOutcome;
-    type Error = Infallible;
-    type Future = EdgeFut;
-
-    fn poll_ready(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+impl Detect {
+    pub fn new(detector: Arc<dyn Detector>) -> Self {
+        Self { detector }
     }
+}
 
-    fn call(&mut self, req: Request) -> Self::Future {
-        // Only evaluate when no upstream policy already decided.
+#[async_trait]
+impl LayerService for Detect {
+    type Request = Request;
+    type Response = EdgeOutcome;
+
+    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
         if req.ctx.outcome().is_some() {
-            let inner = self.inner.clone();
-            return Box::pin(async move { ServiceExt::oneshot(inner, req).await });
+            return next.run(req).await;
         }
 
         match self.detector.evaluate(&req.ctx).action {
-            Action::Allow => {
-                let inner = self.inner.clone();
-                Box::pin(async move { ServiceExt::oneshot(inner, req).await })
-            }
-            Action::Block => ok(EdgeOutcome::text(403, "blocked")),
-            // Bubble to outer Challenge layer (onion response path).
-            Action::Challenge => ok(EdgeOutcome::Challenge),
+            Action::Allow => next.run(req).await,
+            Action::Block => EdgeOutcome::text(403, "blocked"),
+            Action::Challenge => EdgeOutcome::Challenge,
         }
     }
 }

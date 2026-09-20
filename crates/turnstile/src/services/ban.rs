@@ -1,37 +1,31 @@
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use pinnacle_core::{Request, Service, ServiceExt};
+use async_trait::async_trait;
+use pinnacle_core::{LayerService, Next, Request};
 use pinnacle_store::Store;
 
-use super::{ok, EdgeFut};
 use crate::EdgeOutcome;
 
 #[derive(Clone)]
-pub struct Ban<S> {
-    pub(crate) store: Arc<dyn Store>,
-    pub(crate) inner: S,
+pub struct Ban {
+    store: Arc<dyn Store>,
 }
 
-impl<S> Service<Request> for Ban<S>
-where
-    S: Service<Request, Response = EdgeOutcome, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    type Response = EdgeOutcome;
-    type Error = Infallible;
-    type Future = EdgeFut;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+impl Ban {
+    pub fn new(store: Arc<dyn Store>) -> Self {
+        Self { store }
     }
+}
 
-    fn call(&mut self, req: Request) -> Self::Future {
+#[async_trait]
+impl LayerService for Ban {
+    type Request = Request;
+    type Response = EdgeOutcome;
+
+    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
         if self.store.is_banned(req.ctx.get_or(pinnacle_core::IP, "")) {
-            return ok(EdgeOutcome::text(403, "store_banned"));
+            return EdgeOutcome::text(403, "store_banned");
         }
-        let inner = self.inner.clone();
-        Box::pin(async move { ServiceExt::oneshot(inner, req).await })
+        next.run(req).await
     }
 }
