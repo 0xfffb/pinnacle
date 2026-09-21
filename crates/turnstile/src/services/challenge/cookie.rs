@@ -1,25 +1,32 @@
-//! Cookie-based JS fingerprint challenge service.
+//! Cookie-based JS fingerprint challenge layer.
 //!
-//! - Challenge HTML / `fp.js`: `Set-Cookie: __pinnacle_cid=…`
-//! - Verify success: `Set-Cookie: __pinnacle_pass=…`
-//! - Every normal request: validate `__pinnacle_pass` against the store
+//! Request routing:
+//! - `GET /__pinnacle/fp.js`                  → serves the fingerprint script
+//! - `POST` + `__pinnacle_cid` cookie present → verifies the fingerprint report
+//! - Any other request                        → validates `__pinnacle_pass` cookie;
+//!                                              issues a challenge page if absent/invalid
 
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use pinnacle_core::{Decision, LayerService, Next, Request};
+use pinnacle_core::{Next, Request};
 use pinnacle_store::{ChallengeSession, Store};
 use serde::Deserialize;
 use tracing::info;
 
+use crate::state::TurnstileState;
 use crate::EdgeOutcome;
+
+// ── Public constants ──────────────────────────────────────────────────────────
 
 pub const SCRIPT_PATH: &str = "/__pinnacle/fp.js";
 pub const COOKIE_CID: &str = "__pinnacle_cid";
 pub const COOKIE_PASS: &str = "__pinnacle_pass";
+
+// ── Private constants ─────────────────────────────────────────────────────────
+
 const EXPECTED_VERSION: &str = "1.0.0";
 const KIND: &str = "cookie";
 const CHALLENGE_ID: &str = "chg_cookie";
+
+// ── Internal types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Wire {
@@ -84,6 +91,8 @@ impl Automation {
     }
 }
 
+// ── Free utilities ────────────────────────────────────────────────────────────
+
 fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
     header.split(';').find_map(|part| {
         let part = part.trim();
@@ -97,7 +106,12 @@ fn set_cookie(name: &str, value: &str) -> String {
     format!("{name}={value}; Path=/; SameSite=Lax")
 }
 
-/// Cookie challenger: issue / classify / verify fingerprint reports.
+// ── CookieChallenger (pure logic, no I/O) ────────────────────────────────────
+
+/// Pure challenge logic: issue challenges, classify requests, verify reports.
+///
+/// This struct contains no I/O or state; it is safe to instantiate as
+/// `CookieChallenger` wherever needed.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CookieChallenger;
 
@@ -146,104 +160,103 @@ impl CookieChallenger {
     }
 }
 
-/// Layer service: script / verify / pass-cookie gate / map inner `Challenge`.
-#[derive(Clone)]
-pub struct CookieChallengerService {
-    store: Arc<dyn Store>,
+// ── Private helpers (store I/O) ───────────────────────────────────────────────
+
+fn issue_page(store: &dyn Store, challenger: CookieChallenger, ip: &str) -> EdgeOutcome {
+    let ch = challenger.issue();
+    let id = ch.id.clone();
+    store.put_challenge(ip, ChallengeSession::new(ch.kind, ch.id, ch.payload));
+    EdgeOutcome::html(503, challenger.challenge_page())
+        .with_cookie(set_cookie(COOKIE_CID, &id))
+}
+
+fn script_response(store: &dyn Store, challenger: CookieChallenger, ip: &str) -> EdgeOutcome {
+    let mut out = EdgeOutcome::js(challenger.challenge_script());
+    if let Some(session) = store.get_challenge(ip) {
+        out = out.with_cookie(set_cookie(COOKIE_CID, &session.challenge_id));
+    }
+    out
+}
+
+/// Returns the issued pass token on success, or `None` if verification failed.
+fn check_verify(
+    store: &dyn Store,
     challenger: CookieChallenger,
-}
+    ip: &str,
+    body: &str,
+) -> Option<String> {
+    let challenge = store
+        .take_challenge(ip)
+        .map(|s| Challenge {
+            kind: s.kind,
+            id: s.challenge_id,
+            payload: s.payload,
+        })
+        .unwrap_or_else(|| challenger.issue());
 
-impl CookieChallengerService {
-    pub fn new(store: Arc<dyn Store>) -> Self {
-        Self {
-            store,
-            challenger: CookieChallenger,
-        }
-    }
-
-    fn issue_page(&self, ip: &str) -> EdgeOutcome {
-        let ch = self.challenger.issue();
-        let id = ch.id.clone();
-        self.store
-            .put_challenge(ip, ChallengeSession::new(ch.kind, ch.id, ch.payload));
-        EdgeOutcome::html(503, self.challenger.challenge_page())
-            .with_cookie(set_cookie(COOKIE_CID, &id))
-    }
-
-    fn script_response(&self, ip: &str) -> EdgeOutcome {
-        let mut out = EdgeOutcome::js(self.challenger.challenge_script());
-        if let Some(session) = self.store.get_challenge(ip) {
-            out = out.with_cookie(set_cookie(COOKIE_CID, &session.challenge_id));
-        }
-        out
-    }
-
-    fn check_verify(&self, ip: &str, body: &str) -> Result<String, Decision> {
-        let challenge = self
-            .store
-            .take_challenge(ip)
-            .map(|s| Challenge {
-                kind: s.kind,
-                id: s.challenge_id,
-                payload: s.payload,
-            })
-            .unwrap_or_else(|| self.challenger.issue());
-
-        if self.challenger.verify(&challenge, body).ok {
-            Ok(self.store.issue_pass(ip))
-        } else {
-            self.store.ban(ip, "challenge_failed");
-            Err(Decision::block("verify", "challenge_failed"))
-        }
-    }
-
-    fn has_valid_pass(&self, ip: &str, cookie_header: &str) -> bool {
-        cookie_value(cookie_header, COOKIE_PASS)
-            .is_some_and(|token| self.store.validate_pass(ip, token))
+    if challenger.verify(&challenge, body).ok {
+        Some(store.issue_pass(ip))
+    } else {
+        store.ban(ip, "challenge_failed");
+        None
     }
 }
 
-#[async_trait]
-impl LayerService for CookieChallengerService {
-    type Request = Request;
-    type Response = EdgeOutcome;
+fn has_valid_pass(store: &dyn Store, ip: &str, cookie_header: &str) -> bool {
+    cookie_value(cookie_header, COOKIE_PASS)
+        .is_some_and(|token| store.validate_pass(ip, token))
+}
 
-    async fn call(&self, mut req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
-        let method = req.ctx.get_or(pinnacle_core::METHOD, "GET").to_owned();
-        let path = req.ctx.get_or(pinnacle_core::PATH, "").to_owned();
-        let cookie = req.ctx.header("cookie").unwrap_or("").to_owned();
-        let ip = req.ctx.get_or(pinnacle_core::IP, "").to_owned();
+// ── Layer function ────────────────────────────────────────────────────────────
 
-        if let Some(wire) = self.challenger.classify(&method, &path, &cookie) {
-            match wire {
-                Wire::Script => return self.script_response(&ip),
-                Wire::Verify => {
-                    let body = String::from_utf8_lossy(&req.take_body().await).into_owned();
-                    return match self.check_verify(&ip, &body) {
-                        Ok(token) => {
+/// Cookie JS-fingerprint challenge layer.
+///
+/// Register with [`from_fn_with_state`](pinnacle_core::from_fn_with_state):
+///
+/// ```rust,ignore
+/// .layer(from_fn_with_state(state.clone(), challenge))
+/// ```
+pub async fn challenge(
+    state: TurnstileState,
+    mut req: Request,
+    next: Next<Request, EdgeOutcome>,
+) -> EdgeOutcome {
+    let challenger = CookieChallenger;
+    let method = req.ctx.get_or(pinnacle_core::METHOD, "GET").to_owned();
+    let path = req.ctx.get_or(pinnacle_core::PATH, "").to_owned();
+    let cookie = req.ctx.header("cookie").unwrap_or("").to_owned();
+    let ip = req.ctx.get_or(pinnacle_core::IP, "").to_owned();
+
+    if let Some(wire) = challenger.classify(&method, &path, &cookie) {
+        match wire {
+            Wire::Script => return script_response(&*state.store, challenger, &ip),
+            Wire::Verify => {
+                let body = String::from_utf8_lossy(&req.take_body().await).into_owned();
+                return match check_verify(&*state.store, challenger, &ip, &body) {
+                        Some(token) => {
                             info!(%ip, ok = true, "verify");
                             EdgeOutcome::empty(200).with_cookie(set_cookie(COOKIE_PASS, &token))
                         }
-                        Err(decision) => {
+                        None => {
                             info!(%ip, ok = false, "verify");
-                            let _ = decision;
                             EdgeOutcome::text(403, "challenge_failed")
                         }
                     };
-                }
             }
         }
+    }
 
-        if !self.has_valid_pass(&ip, &cookie) {
-            return self.issue_page(&ip);
-        }
+    if !has_valid_pass(&*state.store, &ip, &cookie) {
+        return issue_page(&*state.store, challenger, &ip);
+    }
 
-        match next.run(req).await {
-            EdgeOutcome::Challenge => self.issue_page(&ip),
-            other => other,
-        }
+    match next.run(req).await {
+        EdgeOutcome::Challenge => issue_page(&*state.store, challenger, &ip),
+        other => other,
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

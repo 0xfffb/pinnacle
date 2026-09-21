@@ -1,5 +1,4 @@
-//! Re-export [tower] service plumbing.
+//! Re-export [tower] service plumbing used throughout Pinnacle.
 
-pub use tower::layer::util::{Identity, Stack};
 pub use tower::util::BoxCloneSyncService;
 pub use tower::{Layer, Service, ServiceBuilder, ServiceExt};

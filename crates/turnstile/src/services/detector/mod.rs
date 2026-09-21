@@ -1,20 +1,28 @@
-//! Detector feature: layer service + detector providers.
+//! Heuristic risk detector layer.
+//!
+//! Skipped if the context already carries an outcome. Otherwise delegates to
+//! the configured [`Detector`] and maps the [`RiskVerdict`] to a stack decision.
 
 mod heuristic;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use pinnacle_core::{Action, Context, LayerService, Next, Request};
+use pinnacle_core::{Action, Context, Next, Request};
 
 use crate::EdgeOutcome;
 
 pub use heuristic::HeuristicDetector;
 
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/// Result produced by a [`Detector`] for a given request context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskVerdict {
+    /// Risk score in the range `0..=100`.
     pub score: u8,
+    /// Recommended action.
     pub action: Action,
+    /// Human-readable reasons that contributed to the verdict.
     pub reasons: Vec<&'static str>,
 }
 
@@ -28,35 +36,24 @@ impl RiskVerdict {
     }
 }
 
+/// Evaluates a request context and returns a [`RiskVerdict`].
 pub trait Detector: Send + Sync {
     fn evaluate(&self, ctx: &Context) -> RiskVerdict;
 }
 
-#[derive(Clone)]
-pub struct Detect {
+// ── Layer function ────────────────────────────────────────────────────────────
+
+pub async fn detect(
     detector: Arc<dyn Detector>,
-}
-
-impl Detect {
-    pub fn new(detector: Arc<dyn Detector>) -> Self {
-        Self { detector }
+    req: Request,
+    next: Next<Request, EdgeOutcome>,
+) -> EdgeOutcome {
+    if req.ctx.outcome().is_some() {
+        return next.run(req).await;
     }
-}
-
-#[async_trait]
-impl LayerService for Detect {
-    type Request = Request;
-    type Response = EdgeOutcome;
-
-    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
-        if req.ctx.outcome().is_some() {
-            return next.run(req).await;
-        }
-
-        match self.detector.evaluate(&req.ctx).action {
-            Action::Allow => next.run(req).await,
-            Action::Block => EdgeOutcome::text(403, "blocked"),
-            Action::Challenge => EdgeOutcome::Challenge,
-        }
+    match detector.evaluate(&req.ctx).action {
+        Action::Allow => next.run(req).await,
+        Action::Block => EdgeOutcome::text(403, "blocked"),
+        Action::Challenge => EdgeOutcome::Challenge,
     }
 }

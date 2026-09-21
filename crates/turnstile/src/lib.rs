@@ -1,39 +1,69 @@
-//! Turnstile: tower-based anti-bot service stack.
+//! Turnstile: tower-based anti-bot middleware stack.
+//!
+//! # Quick start
+//!
+//! ```rust,ignore
+//! let ts = Turnstile::new(PolicySet::new(vec![]));
+//! let outcome = ts.call(req).await;
+//! ```
+//!
+//! # Adding a custom layer
+//!
+//! ```rust,ignore
+//! use pinnacle_turnstile::{from_fn_with_state, Next, Request, TurnstileState, EdgeOutcome};
+//!
+//! async fn my_layer(
+//!     state: TurnstileState,
+//!     req: Request,
+//!     next: Next<Request, EdgeOutcome>,
+//! ) -> EdgeOutcome {
+//!     // … your logic …
+//!     next.run(req).await
+//! }
+//! ```
 
 mod outcome;
 mod services;
+mod state;
 
 use std::convert::Infallible;
 use std::sync::Arc;
 
 use tracing::info;
 
-use pinnacle_store::Store;
-
 pub use outcome::EdgeOutcome;
 pub use pinnacle_core::{
-    layer_service, Action, BoxCloneSyncService, Context, Decision, Layer, LayerService, Next,
-    Request, Service, ServiceBuilder, ServiceExt, SessionIo,
+    from_fn_with_state, layer_service, Action, BoxCloneSyncService, Context, Decision, Layer,
+    LayerService, Next, Request, Service, ServiceBuilder, ServiceExt, SessionIo,
 };
 pub use services::{
-    Bannd, CookieChallenger, CookieChallengerService, Count, Detect, Detector, Forward,
-    HeuristicDetector, Pass, Policy, PolicyDecision, PolicyEffect, PolicyEngine, PolicySet,
-    RiskVerdict, Rule, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH,
+    banned, challenge, count, detect, policy, CookieChallenger, Detector, Forward,
+    HeuristicDetector, PolicyDecision, PolicyEffect, PolicyEngine, PolicySet, RiskVerdict, Rule,
+    COOKIE_CID, COOKIE_PASS, SCRIPT_PATH,
 };
+pub use state::TurnstileState;
 
-/// Default stack (outer → inner).
+/// Default stack order (outer → inner).
 pub const LAYERS: &[&str] = &["challenge", "banned", "count", "policy", "detector", "forward"];
 
+/// Pre-assembled turnstile middleware stack.
+///
 /// Default stack (outer → inner):
-/// challenge → banned → count → policy → detector → forward
+/// `challenge` → `banned` → `count` → `policy` → `detector` → `forward`
 pub struct Turnstile {
     services: BoxCloneSyncService<Request, EdgeOutcome, Infallible>,
 }
 
 impl Turnstile {
-    pub fn new(policy: PolicySet) -> Self {
-        let store: Arc<dyn Store> = Arc::new(pinnacle_store::MemoryStore::new());
-        let policy: Arc<dyn PolicyEngine> = Arc::new(policy);
+    /// Build the default stack from a [`PolicySet`].
+    pub fn new(policy_set: PolicySet) -> Self {
+        // Store-backed state shared by challenge / banned / count.
+        let state = TurnstileState {
+            store: Arc::new(pinnacle_store::MemoryStore::new()),
+        };
+
+        // Each layer receives only the dependency it actually needs.
+        let policy_engine: Arc<dyn PolicyEngine> = Arc::new(policy_set);
         let detector: Arc<dyn Detector> = Arc::new(HeuristicDetector);
 
         let mut stack = String::from("turnstile stack (outer → inner)");
@@ -42,13 +72,13 @@ impl Turnstile {
         }
         info!("{stack}");
 
-        // First `.layer` is outermost (tower::ServiceBuilder / Stack order).
+        // First `.layer` call is outermost (ServiceBuilder / Stack ordering).
         let services = ServiceBuilder::new()
-            .layer(layer_service(CookieChallengerService::new(store.clone())))
-            .layer(layer_service(Bannd::new(store.clone())))
-            .layer(layer_service(Count::new(store)))
-            .layer(layer_service(Policy::new(policy)))
-            .layer(layer_service(Detect::new(detector)))
+            .layer(from_fn_with_state(state.clone(), challenge))
+            .layer(from_fn_with_state(state.clone(), banned))
+            .layer(from_fn_with_state(state.clone(), count))
+            .layer(from_fn_with_state(policy_engine, policy))
+            .layer(from_fn_with_state(detector, detect))
             .service(Forward);
 
         Self {
@@ -64,7 +94,7 @@ impl Turnstile {
             Ok(o) => o,
             Err(e) => match e {},
         };
-        info!(%path, %ip, outcome = %outcome.log_label(), "decision");
+        info!(%path, %ip, %outcome, "decision");
         outcome
     }
 }

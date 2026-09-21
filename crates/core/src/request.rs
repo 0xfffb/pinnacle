@@ -35,13 +35,13 @@ impl Request {
     }
 
     pub fn with_session(ctx: Context, session: &mut dyn SessionIo) -> Self {
-        let ptr: *mut dyn SessionIo = session;
+        // SAFETY: the transmute erases the borrow lifetime so the raw pointer
+        // can be stored in the struct. Caller must keep `session` alive for
+        // the entire duration of `Turnstile::call`.
+        let ptr = session as *mut dyn SessionIo;
         Self {
             ctx,
-            // SAFETY: caller keeps `session` alive for the whole `Turnstile::call`.
-            session: Some(unsafe {
-                std::mem::transmute::<*mut dyn SessionIo, *mut dyn SessionIo>(ptr)
-            }),
+            session: Some(unsafe { std::mem::transmute(ptr) }),
             cached: None,
         }
     }

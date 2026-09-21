@@ -1,31 +1,19 @@
-use std::sync::Arc;
+//! IP ban check layer.
+//!
+//! Rejects requests from banned IPs before they reach any downstream layer.
 
-use async_trait::async_trait;
-use pinnacle_core::{LayerService, Next, Request};
-use pinnacle_store::Store;
+use pinnacle_core::{Next, Request};
 
+use crate::state::TurnstileState;
 use crate::EdgeOutcome;
 
-#[derive(Clone)]
-pub struct Bannd {
-    store: Arc<dyn Store>,
-}
-
-impl Bannd {
-    pub fn new(store: Arc<dyn Store>) -> Self {
-        Self { store }
+pub async fn banned(
+    state: TurnstileState,
+    req: Request,
+    next: Next<Request, EdgeOutcome>,
+) -> EdgeOutcome {
+    if state.store.is_banned(req.ctx.get_or(pinnacle_core::IP, "")) {
+        return EdgeOutcome::text(403, "store_banned");
     }
-}
-
-#[async_trait]
-impl LayerService for Bannd {
-    type Request = Request;
-    type Response = EdgeOutcome;
-
-    async fn call(&self, req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
-        if self.store.is_banned(req.ctx.get_or(pinnacle_core::IP, "")) {
-            return EdgeOutcome::text(403, "store_banned");
-        }
-        next.run(req).await
-    }
+    next.run(req).await
 }

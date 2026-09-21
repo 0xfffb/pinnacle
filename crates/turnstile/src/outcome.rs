@@ -62,18 +62,21 @@ impl EdgeOutcome {
         self
     }
 
-    /// Compact log form (no response body).
-    pub fn log_label(&self) -> String {
+}
+
+impl std::fmt::Display for EdgeOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Forward => "Forward".into(),
-            Self::Challenge => "Challenge".into(),
+            Self::Forward => f.write_str("forward"),
+            Self::Challenge => f.write_str("challenge"),
             Self::Respond {
                 status,
                 content_type,
                 body,
                 cookies,
-            } => format!(
-                "Respond{{status={status}, content_type={content_type}, body_len={}, cookies={}}}",
+            } => write!(
+                f,
+                "respond(status={status}, content_type={content_type}, body_len={}, cookies={})",
                 body.len(),
                 cookies.len()
             ),

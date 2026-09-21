@@ -1,33 +1,22 @@
-use std::sync::Arc;
+//! Request counter layer.
+//!
+//! Increments the per-IP request counter and stores the value in the request
+//! context under [`pinnacle_core::REQUEST_COUNT`] for downstream layers.
 
-use async_trait::async_trait;
-use pinnacle_core::{LayerService, Next, Request};
-use pinnacle_store::Store;
+use pinnacle_core::{Next, Request};
 
+use crate::state::TurnstileState;
 use crate::EdgeOutcome;
 
-#[derive(Clone)]
-pub struct Count {
-    store: Arc<dyn Store>,
-}
-
-impl Count {
-    pub fn new(store: Arc<dyn Store>) -> Self {
-        Self { store }
-    }
-}
-
-#[async_trait]
-impl LayerService for Count {
-    type Request = Request;
-    type Response = EdgeOutcome;
-
-    async fn call(&self, mut req: Request, next: Next<Request, EdgeOutcome>) -> EdgeOutcome {
-        let ip = req.ctx.get_or(pinnacle_core::IP, "").to_owned();
-        req.ctx.set(
-            pinnacle_core::REQUEST_COUNT,
-            self.store.incr_request(&ip).to_string(),
-        );
-        next.run(req).await
-    }
+pub async fn count(
+    state: TurnstileState,
+    mut req: Request,
+    next: Next<Request, EdgeOutcome>,
+) -> EdgeOutcome {
+    let ip = req.ctx.get_or(pinnacle_core::IP, "").to_owned();
+    req.ctx.set(
+        pinnacle_core::REQUEST_COUNT,
+        state.store.incr_request(&ip).to_string(),
+    );
+    next.run(req).await
 }

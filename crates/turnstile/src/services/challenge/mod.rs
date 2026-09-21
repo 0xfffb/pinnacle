@@ -2,4 +2,4 @@
 
 mod cookie;
 
-pub use cookie::{CookieChallenger, CookieChallengerService, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH};
+pub use cookie::{challenge, CookieChallenger, COOKIE_CID, COOKIE_PASS, SCRIPT_PATH};

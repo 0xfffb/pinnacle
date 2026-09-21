@@ -24,41 +24,24 @@ impl PolicyEffect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyDecision {
     pub effect: PolicyEffect,
-    pub matched_rule: Option<&'static str>,
     pub detail: String,
 }
 
 impl PolicyDecision {
-    pub fn allow(rule: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            effect: PolicyEffect::Allow,
-            matched_rule: Some(rule),
-            detail: detail.into(),
-        }
+    pub fn allow(_rule: &'static str, detail: impl Into<String>) -> Self {
+        Self { effect: PolicyEffect::Allow, detail: detail.into() }
     }
 
-    pub fn block(rule: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            effect: PolicyEffect::Block,
-            matched_rule: Some(rule),
-            detail: detail.into(),
-        }
+    pub fn block(_rule: &'static str, detail: impl Into<String>) -> Self {
+        Self { effect: PolicyEffect::Block, detail: detail.into() }
     }
 
-    pub fn challenge(rule: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            effect: PolicyEffect::Challenge,
-            matched_rule: Some(rule),
-            detail: detail.into(),
-        }
+    pub fn challenge(_rule: &'static str, detail: impl Into<String>) -> Self {
+        Self { effect: PolicyEffect::Challenge, detail: detail.into() }
     }
 
     pub fn cont(detail: impl Into<String>) -> Self {
-        Self {
-            effect: PolicyEffect::Continue,
-            matched_rule: None,
-            detail: detail.into(),
-        }
+        Self { effect: PolicyEffect::Continue, detail: detail.into() }
     }
 
     pub fn action(&self) -> Option<Action> {
