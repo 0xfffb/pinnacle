@@ -1,3 +1,4 @@
+mod middleware;
 mod service;
 mod state;
 
@@ -29,9 +30,9 @@ impl Turnstile {
         info!("{log}");
 
         let stack = Stack::builder()
-            .layer(service::cookie)
-            .layer(service::captcha)
-            .layer(service::banned)
+            .layer(middleware::cookie)
+            .layer(middleware::captcha)
+            .layer(middleware::banned)
             .with_state(state);
 
         Self { stack }

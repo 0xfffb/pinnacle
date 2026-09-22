@@ -4,10 +4,21 @@ use crate::state::TurnstileState;
 
 const CAPTCHA_PATH: &str = "/__captcha";
 
-pub async fn captcha(state: TurnstileState, req: Request<Bytes>, next: Next) -> Decision {
-    let _ = state;
-    if req.uri().path() == CAPTCHA_PATH {
-        return Respond::html(StatusCode::ACCEPTED, "<h1>Captcha</h1>").into();
+#[derive(Clone)]
+pub struct CaptchaChallengeService {
+    state: TurnstileState,
+}
+
+impl CaptchaChallengeService {
+    pub fn new(state: TurnstileState) -> Self {
+        Self { state }
     }
-    next.run(req).await
+
+    pub async fn call(self, req: Request<Bytes>, next: Next) -> Decision {
+        let _ = self.state;
+        if req.uri().path() == CAPTCHA_PATH {
+            return Respond::html(StatusCode::ACCEPTED, "<h1>Captcha</h1>").into();
+        }
+        next.run(req).await
+    }
 }

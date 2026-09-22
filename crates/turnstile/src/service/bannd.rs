@@ -2,14 +2,25 @@ use pinnacle_core::{Bytes, ClientIp, Decision, Next, Request, Respond, StatusCod
 
 use crate::state::TurnstileState;
 
-pub async fn banned(state: TurnstileState, req: Request<Bytes>, next: Next) -> Decision {
-    let ip = req
-        .extensions()
-        .get::<ClientIp>()
-        .map(ClientIp::as_str)
-        .unwrap_or("");
-    if state.store.is_banned(ip) {
-        return Respond::text(StatusCode::FORBIDDEN, "store_banned").into();
+#[derive(Clone)]
+pub struct BannedService {
+    state: TurnstileState,
+}
+
+impl BannedService {
+    pub fn new(state: TurnstileState) -> Self {
+        Self { state }
     }
-    next.run(req).await
+
+    pub async fn call(self, req: Request<Bytes>, next: Next) -> Decision {
+        let ip = req
+            .extensions()
+            .get::<ClientIp>()
+            .map(ClientIp::as_str)
+            .unwrap_or("");
+        if self.state.store.is_banned(ip) {
+            return Respond::text(StatusCode::FORBIDDEN, "store_banned").into();
+        }
+        next.run(req).await
+    }
 }
