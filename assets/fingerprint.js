@@ -1,6 +1,6 @@
 (async function () {
   const VERSION = "1.0.0";
-  const COOKIE_CID = "__pinnacle_cid";
+  const VERIFY_PATH = new URL(document.currentScript.src).pathname;
 
   function detectAutomation() {
     const ua = navigator.userAgent || "";
@@ -33,17 +33,8 @@
     seed: Math.random().toString(36).slice(2),
   };
 
-  const cid = document.cookie
-    .split(";")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith(COOKIE_CID + "="));
-  if (!cid) {
-    location.reload();
-    return;
-  }
-
   try {
-    await fetch("/__pinnacle", {
+    await fetch(VERIFY_PATH, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",

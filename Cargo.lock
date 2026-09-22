@@ -1212,6 +1212,7 @@ dependencies = [
  "http",
  "pinnacle-core",
  "pinnacle-store",
+ "rand",
  "serde_json",
  "tower",
  "tracing",

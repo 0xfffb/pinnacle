@@ -4,10 +4,6 @@ use tracing::info;
 
 use crate::state::TurnstileState;
 
-pub const PATH: &str = "/__pinnacle";
-pub const COOKIE_CID: &str = "__pinnacle_cid";
-pub const COOKIE_PASS: &str = "__pinnacle_pass";
-
 const VERSION: &str = "1.0.0";
 const KIND: &str = "cookie";
 const CID: &str = "chg_cookie";
@@ -55,6 +51,7 @@ impl CookieChallengeService {
     }
 
     pub async fn call(self, req: Request<Bytes>, next: Next) -> Decision {
+        let ep = &self.state.endpoints;
         let path = req.uri().path().to_owned();
         let ip = client_ip(&req).to_owned();
         let cookies = req
@@ -64,14 +61,20 @@ impl CookieChallengeService {
             .unwrap_or("")
             .to_owned();
 
-        if path == PATH {
+        if path == ep.path {
             match *req.method() {
                 http::Method::GET => {
-                    let mut res =
-                        Respond::javascript(include_str!("../../../../../assets/fingerprint.js"));
-                    if let Some(s) = self.state.store.get_challenge(&ip) {
-                        res = res.with_cookie(set_cookie(COOKIE_CID, &s.challenge_id));
-                    }
+                    let mut res = Respond::javascript(include_str!(
+                        "../../../../../assets/fingerprint.js"
+                    ));
+                    // Ensure cid is present when the script loads.
+                    let cid_val = self
+                        .state
+                        .store
+                        .get_challenge(&ip)
+                        .map(|s| s.challenge_id)
+                        .unwrap_or_else(|| CID.to_owned());
+                    res = res.with_cookie(set_cookie(&ep.cookie_cid, &cid_val));
                     return res.into();
                 }
                 http::Method::POST => {
@@ -87,7 +90,7 @@ impl CookieChallengeService {
                     return if ok {
                         let token = self.state.store.issue_pass(&ip);
                         Respond::text(StatusCode::OK, "")
-                            .with_cookie(set_cookie(COOKIE_PASS, &token))
+                            .with_cookie(set_cookie(&ep.cookie_pass, &token))
                             .into()
                     } else {
                         self.state.store.ban(&ip, "challenge_failed");
@@ -98,7 +101,7 @@ impl CookieChallengeService {
             }
         }
 
-        let pass_ok = cookie_val(&cookies, COOKIE_PASS)
+        let pass_ok = cookie_val(&cookies, &ep.cookie_pass)
             .is_some_and(|t| self.state.store.validate_pass(&ip, t));
         if pass_ok {
             next.run(req).await
@@ -107,9 +110,9 @@ impl CookieChallengeService {
                 .store
                 .put_challenge(&ip, ChallengeSession::new(KIND, CID, VERSION));
             let page = include_str!("../../../../../assets/challenge.html")
-                .replace("__SCRIPT_PATH__", PATH);
+                .replace("__SCRIPT_PATH__", &ep.path);
             Respond::html(StatusCode::SERVICE_UNAVAILABLE, page)
-                .with_cookie(set_cookie(COOKIE_CID, CID))
+                .with_cookie(set_cookie(&ep.cookie_cid, CID))
                 .into()
         }
     }

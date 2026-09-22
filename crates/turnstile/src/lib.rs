@@ -7,20 +7,33 @@ use std::sync::Arc;
 use pinnacle_core::{Bytes, Decision, Request, Stack};
 use tracing::info;
 
-pub use service::{COOKIE_CID, COOKIE_PASS, PATH};
-pub use state::TurnstileState;
+pub use state::{CookieEndpoint, TurnstileState};
 
 pub const LAYERS: &[&str] = &["cookie", "captcha", "banned"];
 
 #[derive(Clone)]
 pub struct Turnstile {
     stack: Stack,
+    endpoints: Arc<CookieEndpoint>,
 }
 
 impl Turnstile {
     pub fn new() -> Self {
+        let endpoints = Arc::new(CookieEndpoint {
+            path: CookieEndpoint::random_path(),
+            cookie_cid: "EPIN-CID".to_string(),
+            cookie_pass: "EPIN-A-S3CR3T".to_string(),
+        });
+
+        info!(
+            path = %endpoints.path,
+            cid = %endpoints.cookie_cid,
+            "cookie challenge endpoint"
+        );
+
         let state = TurnstileState {
             store: Arc::new(pinnacle_store::MemoryStore::new()),
+            endpoints: endpoints.clone(),
         };
 
         let mut log = String::from("turnstile stack (outer → inner)");
@@ -35,7 +48,11 @@ impl Turnstile {
             .layer(middleware::banned)
             .with_state(state);
 
-        Self { stack }
+        Self { stack, endpoints }
+    }
+
+    pub fn endpoints(&self) -> &CookieEndpoint {
+        &self.endpoints
     }
 
     pub async fn decide(&self, req: Request<Bytes>) -> Decision {
@@ -73,9 +90,10 @@ mod tests {
     #[test]
     fn script_served_at_path() {
         let ts = Turnstile::new();
+        let path = ts.endpoints().path.clone();
         let out = futures::executor::block_on(ts.decide(req(
             Method::GET,
-            PATH,
+            &path,
             "1.1.1.1",
             "",
             Bytes::new(),
@@ -83,11 +101,21 @@ mod tests {
         let res = out.expect("respond");
         assert_eq!(res.status(), 200);
         assert!(!res.body().is_empty());
+        assert!(
+            res.headers()
+                .get_all("set-cookie")
+                .iter()
+                .any(|c| c.to_str().unwrap_or("").starts_with(&format!(
+                    "{}=",
+                    ts.endpoints().cookie_cid
+                )))
+        );
     }
 
     #[test]
     fn root_issues_cid_cookie() {
         let ts = Turnstile::new();
+        let cid = ts.endpoints().cookie_cid.clone();
         let out = futures::executor::block_on(ts.decide(req(
             Method::GET,
             "/",
@@ -101,13 +129,17 @@ mod tests {
             res.headers()
                 .get_all("set-cookie")
                 .iter()
-                .any(|c| c.to_str().unwrap_or("").starts_with(&format!("{COOKIE_CID}=")))
+                .any(|c| c.to_str().unwrap_or("").starts_with(&format!("{cid}=")))
         );
     }
 
     #[test]
     fn verify_issues_pass_cookie_required_every_request() {
         let ts = Turnstile::new();
+        let path = ts.endpoints().path.clone();
+        let cid = ts.endpoints().cookie_cid.clone();
+        let pass_name = ts.endpoints().cookie_pass.clone();
+
         let _ = futures::executor::block_on(ts.decide(req(
             Method::GET,
             "/",
@@ -119,14 +151,14 @@ mod tests {
         let body = Bytes::from_static(br#"{"version":"1.0.0","automation":{"webdriver":false}}"#);
         let out = futures::executor::block_on(ts.decide(req(
             Method::POST,
-            PATH,
+            &path,
             "9.9.9.9",
-            &format!("{COOKIE_CID}=chg_cookie"),
+            &format!("{cid}=chg_cookie"),
             body,
         )));
         let res = out.expect("respond");
         assert_eq!(res.status(), 200);
-        let pass = set_cookie_pair(&res, COOKIE_PASS);
+        let pass = set_cookie_pair(&res, &pass_name);
 
         let no_cookie = futures::executor::block_on(ts.decide(req(
             Method::GET,

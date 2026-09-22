@@ -1,8 +1,8 @@
 use bytes::Bytes;
+use http::header::CONTENT_TYPE;
 use http::Method;
 use pingora::proxy::Session;
 use pinnacle_core::{ClientIp, Request};
-use pinnacle_turnstile::PATH;
 
 const MAX_BODY: usize = 16 * 1024;
 
@@ -23,9 +23,13 @@ pub async fn request(session: &mut Session) -> Request<Bytes> {
         )
     };
 
-    // Only buffer body when a terminal handler needs it. Otherwise leave it in
-    // the Session so an Allow/proxy can still forward upstream.
-    let body = if method == Method::POST && uri.path() == PATH {
+    // Buffer small JSON POSTs (challenge verify). Leave other bodies for upstream.
+    let json_post = method == Method::POST
+        && headers
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|t| t.contains("application/json"));
+    let body = if json_post {
         read_body(session).await
     } else {
         Bytes::new()
