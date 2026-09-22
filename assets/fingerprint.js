@@ -43,7 +43,7 @@
   }
 
   try {
-    await fetch(location.pathname + location.search, {
+    await fetch("/__pinnacle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",

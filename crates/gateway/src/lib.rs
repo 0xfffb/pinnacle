@@ -1,5 +1,3 @@
-//! Pingora HTTP adapter over turnstile.
-
 mod downstream;
 
 use async_trait::async_trait;
@@ -9,17 +7,16 @@ use pinnacle_turnstile::Turnstile;
 
 pub use downstream::Downstream;
 
-/// Edge gateway: Pingora ↔ [`Turnstile`].
 pub struct Gateway {
-    turnstile: Turnstile,
     upstream: (String, u16),
+    turnstile: Turnstile,
 }
 
 impl Gateway {
     pub fn new(upstream: (String, u16), turnstile: Turnstile) -> Self {
         Self {
-            turnstile,
             upstream,
+            turnstile,
         }
     }
 }
@@ -32,8 +29,9 @@ impl ProxyHttp for Gateway {
 
     async fn request_filter(&self, session: &mut Session, _ctx: &mut ()) -> Result<bool> {
         let mut downstream = Downstream::new(session);
-        let outcome = self.turnstile.call(downstream.request()).await;
-        downstream.apply(outcome).await
+        let transaction = downstream.transaction();
+        let disposition = self.turnstile.call(transaction).await;
+        downstream.apply(disposition).await
     }
 
     async fn upstream_peer(&self, _: &mut Session, _: &mut ()) -> Result<Box<HttpPeer>> {

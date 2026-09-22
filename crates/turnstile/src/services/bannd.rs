@@ -1,19 +1,15 @@
-//! IP ban check layer.
-//!
-//! Rejects requests from banned IPs before they reach any downstream layer.
-
-use pinnacle_core::{Next, Request};
+use pinnacle_core::{Disposition, Next, Reply, Transaction};
 
 use crate::state::TurnstileState;
-use crate::EdgeOutcome;
 
 pub async fn banned(
     state: TurnstileState,
-    req: Request,
-    next: Next<Request, EdgeOutcome>,
-) -> EdgeOutcome {
-    if state.store.is_banned(req.ctx.get_or(pinnacle_core::IP, "")) {
-        return EdgeOutcome::text(403, "store_banned");
+    transaction: Transaction,
+    next: Next<Transaction, Disposition>,
+) -> Disposition {
+    let ip = transaction.meta.get("ip").map(String::as_str).unwrap_or("");
+    if state.store.is_banned(ip) {
+        return Disposition::respond(Reply::text(403, "store_banned"));
     }
-    next.run(req).await
+    next.forward(transaction).await
 }

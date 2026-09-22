@@ -1165,7 +1165,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "pingora",
- "pinnacle-core",
  "pinnacle-gateway",
  "pinnacle-turnstile",
  "serde",
@@ -1213,6 +1212,7 @@ dependencies = [
  "pinnacle-store",
  "serde",
  "serde_json",
+ "tower",
  "tracing",
 ]
 

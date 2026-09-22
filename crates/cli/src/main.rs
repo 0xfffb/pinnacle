@@ -57,13 +57,13 @@ impl Cli {
         let upstream_addr = format!("{}:{}", upstream.0, upstream.1);
         print_banner(&cfg.listen, &upstream_addr);
 
-        let turnstile = Turnstile::new(cfg.policy());
-
         let mut server = Server::new(Some(Opt::default())).unwrap();
         server.bootstrap();
 
-        let mut proxy =
-            http_proxy_service(&server.configuration, Gateway::new(upstream, turnstile));
+        let mut proxy = http_proxy_service(
+            &server.configuration,
+            Gateway::new(upstream, Turnstile::new()),
+        );
         proxy.add_tcp(&cfg.listen);
 
         server.add_service(proxy);

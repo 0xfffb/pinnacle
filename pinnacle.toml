@@ -1,5 +1,2 @@
 listen = "0.0.0.0:6188"
 upstream = "127.0.0.1:8080"
-
-# Rules disabled for now (challenge / policy experiments).
-rules = []
