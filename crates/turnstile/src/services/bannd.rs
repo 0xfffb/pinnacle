@@ -1,15 +1,41 @@
-use pinnacle_core::{Disposition, Next, Reply, Transaction};
+use async_trait::async_trait;
+use pinnacle_core::{Disposition, LayerService, Next, Reply, Transaction};
 
 use crate::state::TurnstileState;
 
-pub async fn banned(
+#[derive(Clone)]
+pub struct BannedService {
     state: TurnstileState,
-    transaction: Transaction,
-    next: Next<Transaction, Disposition>,
-) -> Disposition {
-    let ip = transaction.meta.get("ip").map(String::as_str).unwrap_or("");
-    if state.store.is_banned(ip) {
-        return Disposition::respond(Reply::text(403, "store_banned"));
+}
+
+impl BannedService {
+    pub fn new(state: TurnstileState) -> Self {
+        Self { state }
     }
-    next.forward(transaction).await
+
+    pub async fn forward(
+        &self,
+        transaction: Transaction,
+        next: Next<Transaction, Disposition>,
+    ) -> Disposition {
+        let ip = transaction.meta.get("ip").map(String::as_str).unwrap_or("");
+        if self.state.store.is_banned(ip) {
+            return Disposition::respond(Reply::text(403, "store_banned"));
+        }
+        next.forward(transaction).await
+    }
+}
+
+#[async_trait]
+impl LayerService for BannedService {
+    type Transaction = Transaction;
+    type Disposition = Disposition;
+
+    async fn call(
+        &self,
+        transaction: Transaction,
+        next: Next<Transaction, Disposition>,
+    ) -> Disposition {
+        self.forward(transaction, next).await
+    }
 }

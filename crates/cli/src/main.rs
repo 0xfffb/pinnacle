@@ -11,7 +11,6 @@ use tracing_subscriber::EnvFilter;
 
 use config::Config;
 use pinnacle_gateway::Gateway;
-use pinnacle_turnstile::Turnstile;
 
 #[derive(Parser, Debug)]
 #[command(name = "pinnacle", about = "Anti-bot gateway")]
@@ -62,7 +61,7 @@ impl Cli {
 
         let mut proxy = http_proxy_service(
             &server.configuration,
-            Gateway::new(upstream, Turnstile::new()),
+            Gateway::new(upstream, pinnacle_turnstile::Turnstile::new()),
         );
         proxy.add_tcp(&cfg.listen);
 

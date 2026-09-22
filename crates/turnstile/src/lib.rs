@@ -1,22 +1,22 @@
 mod services;
 mod state;
 
-use std::convert::Infallible;
 use std::sync::Arc;
 
-use pinnacle_core::{from_fn, AsLayer};
-use tower::util::BoxCloneSyncService;
-use tower::{ServiceBuilder, ServiceExt};
+use pinnacle_core::Stack;
 use tracing::info;
 
-pub use pinnacle_core::{Disposition, Next, Reply, Transaction};
-pub use services::{banned, CaptchaChallengeService, CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH};
+pub use pinnacle_core::{Disposition, Next, Reply, StackBuilder, Transaction};
+pub use services::{
+    BannedService, CaptchaChallengeService, CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH,
+};
 pub use state::TurnstileState;
 
-pub const LAYERS: &[&str] = &["challenge", "banned"];
+pub const LAYERS: &[&str] = &["cookie", "captcha", "banned"];
 
+#[derive(Clone)]
 pub struct Turnstile {
-    services: BoxCloneSyncService<Transaction, Disposition, Infallible>,
+    stack: Stack,
 }
 
 impl Turnstile {
@@ -25,37 +25,24 @@ impl Turnstile {
             store: Arc::new(pinnacle_store::MemoryStore::new()),
         };
 
-        let mut stack = String::from("turnstile stack (outer → inner)");
+        let mut log = String::from("turnstile stack (outer → inner)");
         for (i, layer) in LAYERS.iter().enumerate() {
-            stack.push_str(&format!("\n  [{}] {layer}", i + 1));
+            log.push_str(&format!("\n  [{}] {layer}", i + 1));
         }
-        info!("{stack}");
+        info!("{log}");
 
-        let services = ServiceBuilder::new()
-            .layer(AsLayer::new(CookieChallengeService::new(state.clone())))
-            .layer(from_fn(state.clone(), banned))
-            .layer(AsLayer::new(CaptchaChallengeService::new(state.clone())))
-            .service_fn(|_transaction: Transaction| async {
-                Ok::<_, Infallible>(Disposition::allow())
-            });
+        let stack = Stack::builder(state)
+            .with(CookieChallengeService::new)
+            .with(CaptchaChallengeService::new)
+            .with(BannedService::new)
+            .default(Disposition::allow())
+            .build();
 
-        Self {
-            services: BoxCloneSyncService::new(services),
-        }
+        Self { stack }
     }
 
-    pub async fn call(&self, transaction: Transaction) -> Disposition {
-        let service = self.services.clone();
-        match ServiceExt::oneshot(service, transaction).await {
-            Ok(disposition) => disposition,
-            Err(e) => match e {},
-        }
-    }
-}
-
-impl Default for Turnstile {
-    fn default() -> Self {
-        Self::new()
+    pub async fn decide(&self, transaction: Transaction) -> Disposition {
+        self.stack.decide(transaction).await
     }
 }
 
@@ -86,7 +73,7 @@ mod tests {
     #[test]
     fn script_served_at_path() {
         let ts = Turnstile::new();
-        let out = futures::executor::block_on(ts.call(transaction(
+        let out = futures::executor::block_on(ts.decide(transaction(
             PATH,
             "1.1.1.1",
             TransactionKind::Get,
@@ -100,7 +87,7 @@ mod tests {
     #[test]
     fn root_issues_cid_cookie() {
         let ts = Turnstile::new();
-        let out = futures::executor::block_on(ts.call(transaction(
+        let out = futures::executor::block_on(ts.decide(transaction(
             "/",
             "1.1.1.1",
             TransactionKind::Get,
@@ -122,7 +109,7 @@ mod tests {
     #[test]
     fn verify_issues_pass_cookie_required_every_request() {
         let ts = Turnstile::new();
-        let _ = futures::executor::block_on(ts.call(transaction(
+        let _ = futures::executor::block_on(ts.decide(transaction(
             "/",
             "9.9.9.9",
             TransactionKind::Get,
@@ -136,7 +123,7 @@ mod tests {
         meta.insert("ip".into(), "9.9.9.9".into());
         let verify =
             Transaction::new(meta, headers, TransactionKind::Post).with_full(body.to_vec());
-        let out = futures::executor::block_on(ts.call(verify));
+        let out = futures::executor::block_on(ts.decide(verify));
         let reply = out.reply().expect("respond");
         assert_eq!(reply.status, 200);
         let pass_cookie = reply
@@ -146,7 +133,7 @@ mod tests {
             .map(|c| cookie_pair(c))
             .expect("pass Set-Cookie");
 
-        let no_cookie = futures::executor::block_on(ts.call(transaction(
+        let no_cookie = futures::executor::block_on(ts.decide(transaction(
             "/",
             "9.9.9.9",
             TransactionKind::Get,
@@ -159,6 +146,6 @@ mod tests {
         meta.insert("path".into(), "/".into());
         meta.insert("ip".into(), "9.9.9.9".into());
         let with_pass = Transaction::new(meta, headers, TransactionKind::Get);
-        assert!(futures::executor::block_on(ts.call(with_pass)).is_allow());
+        assert!(futures::executor::block_on(ts.decide(with_pass)).is_allow());
     }
 }

@@ -30,7 +30,7 @@ impl ProxyHttp for Gateway {
     async fn request_filter(&self, session: &mut Session, _ctx: &mut ()) -> Result<bool> {
         let mut downstream = Downstream::new(session);
         let transaction = downstream.transaction();
-        let disposition = self.turnstile.call(transaction).await;
+        let disposition = self.turnstile.decide(transaction).await;
         downstream.apply(disposition).await
     }
 
