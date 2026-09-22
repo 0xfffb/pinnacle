@@ -1177,8 +1177,9 @@ dependencies = [
 name = "pinnacle-core"
 version = "0.1.0"
 dependencies = [
- "async-trait",
+ "bytes",
  "futures",
+ "http",
  "tower",
 ]
 
@@ -1206,11 +1207,11 @@ dependencies = [
 name = "pinnacle-turnstile"
 version = "0.1.0"
 dependencies = [
- "async-trait",
+ "bytes",
  "futures",
+ "http",
  "pinnacle-core",
  "pinnacle-store",
- "serde",
  "serde_json",
  "tower",
  "tracing",

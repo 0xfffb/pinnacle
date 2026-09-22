@@ -29,9 +29,9 @@ impl ProxyHttp for Gateway {
 
     async fn request_filter(&self, session: &mut Session, _ctx: &mut ()) -> Result<bool> {
         let mut downstream = Downstream::new(session);
-        let transaction = downstream.transaction();
-        let disposition = self.turnstile.decide(transaction).await;
-        downstream.apply(disposition).await
+        let req = downstream.request().await;
+        let decision = self.turnstile.decide(req).await;
+        downstream.apply(decision).await
     }
 
     async fn upstream_peer(&self, _: &mut Session, _: &mut ()) -> Result<Box<HttpPeer>> {

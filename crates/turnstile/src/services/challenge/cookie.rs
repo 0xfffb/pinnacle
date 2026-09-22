@@ -1,7 +1,4 @@
-//! `GET/POST /__pinnacle` → script / verify; else require pass cookie.
-
-use async_trait::async_trait;
-use pinnacle_core::{Disposition, LayerService, Next, Reply, Transaction, TransactionKind};
+use pinnacle_core::{Bytes, ClientIp, Decision, Next, Request, Respond, StatusCode};
 use pinnacle_store::ChallengeSession;
 use tracing::info;
 
@@ -15,7 +12,7 @@ const VERSION: &str = "1.0.0";
 const KIND: &str = "cookie";
 const CID: &str = "chg_cookie";
 
-fn cookie<'a>(header: &'a str, name: &str) -> Option<&'a str> {
+fn cookie_val<'a>(header: &'a str, name: &str) -> Option<&'a str> {
     header.split(';').find_map(|p| {
         let p = p.trim();
         p.split_once('=')
@@ -40,82 +37,69 @@ fn report_ok(raw: &str) -> bool {
         .is_some_and(|o| o.values().any(|x| x.as_bool() == Some(true)))
 }
 
-#[derive(Clone)]
-pub struct CookieChallengeService {
-    state: TurnstileState,
+fn client_ip(req: &Request<Bytes>) -> &str {
+    req.extensions()
+        .get::<ClientIp>()
+        .map(ClientIp::as_str)
+        .unwrap_or("")
 }
 
-impl CookieChallengeService {
-    pub fn new(state: TurnstileState) -> Self {
-        Self { state }
-    }
+pub async fn cookie(state: TurnstileState, req: Request<Bytes>, next: Next) -> Decision {
+    let path = req.uri().path().to_owned();
+    let ip = client_ip(&req).to_owned();
+    let cookies = req
+        .headers()
+        .get(http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
 
-    fn script(&self, ip: &str) -> Disposition {
-        let mut reply = Reply::javascript(include_str!("../../../../../assets/fingerprint.js"));
-        if let Some(s) = self.state.store.get_challenge(ip) {
-            reply = reply.with_cookie(set_cookie(COOKIE_CID, &s.challenge_id));
-        }
-        Disposition::respond(reply)
-    }
-
-    fn challenge(&self, ip: &str) -> Disposition {
-        self.state
-            .store
-            .put_challenge(ip, ChallengeSession::new(KIND, CID, VERSION));
-        let html =
-            include_str!("../../../../../assets/challenge.html").replace("__SCRIPT_PATH__", PATH);
-        Disposition::respond(Reply::html(503, html).with_cookie(set_cookie(COOKIE_CID, CID)))
-    }
-
-    fn verify(&self, ip: &str, body: &str) -> Disposition {
-        let kind_ok = self
-            .state
-            .store
-            .take_challenge(ip)
-            .map(|s| s.kind == KIND)
-            .unwrap_or(true);
-        let ok = kind_ok && report_ok(body);
-        info!(%ip, ok, "verify");
-        if ok {
-            let token = self.state.store.issue_pass(ip);
-            Disposition::respond(Reply::empty(200).with_cookie(set_cookie(COOKIE_PASS, &token)))
-        } else {
-            self.state.store.ban(ip, "challenge_failed");
-            Disposition::respond(Reply::text(403, "challenge_failed"))
-        }
-    }
-
-}
-
-#[async_trait]
-impl LayerService for CookieChallengeService {
-    async fn forward(
-        &self,
-        mut transaction: Transaction,
-        next: Next<Transaction, Disposition>,
-    ) -> Disposition {
-        let path = transaction.meta.get("path").cloned().unwrap_or_default();
-        let ip = transaction.meta.get("ip").cloned().unwrap_or_default();
-        let cookies = transaction.headers.get("cookie").cloned().unwrap_or_default();
-
-        if path == PATH {
-            match transaction.method {
-                TransactionKind::Get => return self.script(&ip),
-                TransactionKind::Post => {
-                    let body = String::from_utf8_lossy(&transaction.body().await).into_owned();
-                    return self.verify(&ip, &body);
+    if path == PATH {
+        match *req.method() {
+            http::Method::GET => {
+                let mut res =
+                    Respond::javascript(include_str!("../../../../../assets/fingerprint.js"));
+                if let Some(s) = state.store.get_challenge(&ip) {
+                    res = res.with_cookie(set_cookie(COOKIE_CID, &s.challenge_id));
                 }
-                _ => {}
+                return res.into();
             }
+            http::Method::POST => {
+                let body = String::from_utf8_lossy(req.body());
+                let kind_ok = state
+                    .store
+                    .take_challenge(&ip)
+                    .map(|s| s.kind == KIND)
+                    .unwrap_or(true);
+                let ok = kind_ok && report_ok(&body);
+                info!(%ip, ok, "verify");
+                return if ok {
+                    let token = state.store.issue_pass(&ip);
+                    Respond::text(StatusCode::OK, "")
+                        .with_cookie(set_cookie(COOKIE_PASS, &token))
+                        .into()
+                } else {
+                    state.store.ban(&ip, "challenge_failed");
+                    Respond::text(StatusCode::FORBIDDEN, "challenge_failed").into()
+                };
+            }
+            _ => {}
         }
+    }
 
-        let pass_ok = cookie(&cookies, COOKIE_PASS)
-            .is_some_and(|t| self.state.store.validate_pass(&ip, t));
-        if pass_ok {
-            next.forward(transaction).await
-        } else {
-            self.challenge(&ip)
-        }
+    let pass_ok =
+        cookie_val(&cookies, COOKIE_PASS).is_some_and(|t| state.store.validate_pass(&ip, t));
+    if pass_ok {
+        next.run(req).await
+    } else {
+        state
+            .store
+            .put_challenge(&ip, ChallengeSession::new(KIND, CID, VERSION));
+        let page = include_str!("../../../../../assets/challenge.html")
+            .replace("__SCRIPT_PATH__", PATH);
+        Respond::html(StatusCode::SERVICE_UNAVAILABLE, page)
+            .with_cookie(set_cookie(COOKIE_CID, CID))
+            .into()
     }
 }
 

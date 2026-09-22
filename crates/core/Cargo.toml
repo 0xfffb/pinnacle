@@ -6,6 +6,7 @@ license.workspace = true
 description = "Core domain and shared logic for Pinnacle"
 
 [dependencies]
-async-trait = "0.1"
+bytes = "1"
 futures = "0.3"
+http = "1"
 tower = { version = "0.5", features = ["util"] }

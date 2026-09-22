@@ -3,13 +3,10 @@ mod state;
 
 use std::sync::Arc;
 
-use pinnacle_core::Stack;
+use pinnacle_core::{Bytes, Decision, Request, Stack};
 use tracing::info;
 
-pub use pinnacle_core::{Disposition, Next, Reply, StackBuilder, Transaction};
-pub use services::{
-    BannedService, CaptchaChallengeService, CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH,
-};
+pub use services::{COOKIE_CID, COOKIE_PASS, PATH};
 pub use state::TurnstileState;
 
 pub const LAYERS: &[&str] = &["cookie", "captcha", "banned"];
@@ -31,121 +28,121 @@ impl Turnstile {
         }
         info!("{log}");
 
-        let stack = Stack::builder(state)
-            .with(CookieChallengeService::new)
-            .with(CaptchaChallengeService::new)
-            .with(BannedService::new)
-            .default(Disposition::allow())
-            .build();
+        let stack = Stack::builder()
+            .layer(services::cookie)
+            .layer(services::captcha)
+            .layer(services::banned)
+            .with_state(state);
 
         Self { stack }
     }
 
-    pub async fn decide(&self, transaction: Transaction) -> Disposition {
-        self.stack.decide(transaction).await
+    pub async fn decide(&self, req: Request<Bytes>) -> Decision {
+        self.stack.decide(req).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-    use pinnacle_core::TransactionKind;
+    use http::Method;
+    use pinnacle_core::{Bytes, ClientIp};
 
-    fn transaction(path: &str, ip: &str, method: TransactionKind) -> Transaction {
-        let mut meta = HashMap::new();
-        meta.insert("path".into(), path.into());
-        meta.insert("ip".into(), ip.into());
-        meta.insert("user_agent".into(), "Mozilla/5.0".into());
-        Transaction::new(meta, HashMap::new(), method)
+    fn req(method: Method, path: &str, ip: &str, cookie: &str, body: Bytes) -> Request<Bytes> {
+        let mut r = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("cookie", cookie)
+            .body(body)
+            .unwrap();
+        r.extensions_mut().insert(ClientIp(ip.into()));
+        r
     }
 
-    fn cookie_pair(set_cookie: &str) -> String {
-        set_cookie
-            .split(';')
-            .next()
-            .unwrap_or(set_cookie)
-            .trim()
-            .to_owned()
+    fn set_cookie_pair(res: &http::Response<Bytes>, name: &str) -> String {
+        res.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with(&format!("{name}=")))
+            .map(|c| c.split(';').next().unwrap_or(c).trim().to_owned())
+            .expect("set-cookie")
     }
 
     #[test]
     fn script_served_at_path() {
         let ts = Turnstile::new();
-        let out = futures::executor::block_on(ts.decide(transaction(
+        let out = futures::executor::block_on(ts.decide(req(
+            Method::GET,
             PATH,
             "1.1.1.1",
-            TransactionKind::Get,
+            "",
+            Bytes::new(),
         )));
-        let reply = out.reply().expect("respond");
-        assert_eq!(reply.status, 200);
-        assert!(reply.content_type.contains("javascript"));
-        assert!(!reply.body.is_empty());
+        let res = out.expect("respond");
+        assert_eq!(res.status(), 200);
+        assert!(!res.body().is_empty());
     }
 
     #[test]
     fn root_issues_cid_cookie() {
         let ts = Turnstile::new();
-        let out = futures::executor::block_on(ts.decide(transaction(
+        let out = futures::executor::block_on(ts.decide(req(
+            Method::GET,
             "/",
             "1.1.1.1",
-            TransactionKind::Get,
+            "",
+            Bytes::new(),
         )));
-        let reply = out.reply().expect("respond");
-        assert_eq!(reply.status, 503);
-        assert!(reply.content_type.contains("html"));
-        assert!(String::from_utf8_lossy(&reply.body).contains(PATH));
+        let res = out.expect("respond");
+        assert_eq!(res.status(), 503);
         assert!(
-            reply
-                .cookies
+            res.headers()
+                .get_all("set-cookie")
                 .iter()
-                .any(|c| c.starts_with(&format!("{COOKIE_CID}="))),
-            "missing cid Set-Cookie: {:?}",
-            reply.cookies
+                .any(|c| c.to_str().unwrap_or("").starts_with(&format!("{COOKIE_CID}=")))
         );
     }
 
     #[test]
     fn verify_issues_pass_cookie_required_every_request() {
         let ts = Turnstile::new();
-        let _ = futures::executor::block_on(ts.decide(transaction(
+        let _ = futures::executor::block_on(ts.decide(req(
+            Method::GET,
             "/",
             "9.9.9.9",
-            TransactionKind::Get,
+            "",
+            Bytes::new(),
         )));
 
-        let body = br#"{"version":"1.0.0","automation":{"webdriver":false}}"#;
-        let mut headers = HashMap::new();
-        headers.insert("cookie".into(), format!("{COOKIE_CID}=chg_cookie"));
-        let mut meta = HashMap::new();
-        meta.insert("path".into(), PATH.into());
-        meta.insert("ip".into(), "9.9.9.9".into());
-        let verify =
-            Transaction::new(meta, headers, TransactionKind::Post).with_full(body.to_vec());
-        let out = futures::executor::block_on(ts.decide(verify));
-        let reply = out.reply().expect("respond");
-        assert_eq!(reply.status, 200);
-        let pass_cookie = reply
-            .cookies
-            .iter()
-            .find(|c| c.starts_with(&format!("{COOKIE_PASS}=")))
-            .map(|c| cookie_pair(c))
-            .expect("pass Set-Cookie");
+        let body = Bytes::from_static(br#"{"version":"1.0.0","automation":{"webdriver":false}}"#);
+        let out = futures::executor::block_on(ts.decide(req(
+            Method::POST,
+            PATH,
+            "9.9.9.9",
+            &format!("{COOKIE_CID}=chg_cookie"),
+            body,
+        )));
+        let res = out.expect("respond");
+        assert_eq!(res.status(), 200);
+        let pass = set_cookie_pair(&res, COOKIE_PASS);
 
-        let no_cookie = futures::executor::block_on(ts.decide(transaction(
+        let no_cookie = futures::executor::block_on(ts.decide(req(
+            Method::GET,
             "/",
             "9.9.9.9",
-            TransactionKind::Get,
+            "",
+            Bytes::new(),
         )));
-        assert_eq!(no_cookie.reply().map(|r| r.status), Some(503));
+        assert_eq!(no_cookie.unwrap().status(), 503);
 
-        let mut headers = HashMap::new();
-        headers.insert("cookie".into(), pass_cookie);
-        let mut meta = HashMap::new();
-        meta.insert("path".into(), "/".into());
-        meta.insert("ip".into(), "9.9.9.9".into());
-        let with_pass = Transaction::new(meta, headers, TransactionKind::Get);
-        assert!(futures::executor::block_on(ts.decide(with_pass)).is_allow());
+        let ok = futures::executor::block_on(ts.decide(req(
+            Method::GET,
+            "/",
+            "9.9.9.9",
+            &pass,
+            Bytes::new(),
+        )));
+        assert!(ok.is_none());
     }
 }

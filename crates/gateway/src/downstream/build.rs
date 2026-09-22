@@ -1,32 +1,56 @@
-use std::collections::HashMap;
-
+use bytes::Bytes;
+use http::Method;
 use pingora::proxy::Session;
-use pinnacle_core::{Transaction, TransactionKind};
+use pinnacle_core::{ClientIp, Request};
+use pinnacle_turnstile::PATH;
 
-use super::body_io::Body;
+const MAX_BODY: usize = 16 * 1024;
 
-pub fn transaction(inner: &mut Session) -> Transaction {
-    let req = inner.req_header();
-    let method = TransactionKind::from(req.method.as_str());
-
-    let mut meta = HashMap::new();
-    meta.insert("path".into(), req.uri.path().to_owned());
-    meta.insert(
-        "ip".into(),
-        inner
+pub async fn request(session: &mut Session) -> Request<Bytes> {
+    let (method, uri, version, headers, ip) = {
+        let header = session.req_header();
+        let ip = session
             .client_addr()
             .and_then(|a| a.as_inet())
             .map(|a| a.ip().to_string())
-            .unwrap_or_else(|| "0.0.0.0".into()),
-    );
+            .unwrap_or_else(|| "0.0.0.0".into());
+        (
+            header.method.clone(),
+            header.uri.clone(),
+            header.version,
+            header.headers.clone(),
+            ip,
+        )
+    };
 
-    let mut headers = HashMap::new();
-    for (name, value) in req.headers.iter() {
-        if let Ok(v) = value.to_str() {
-            headers.insert(name.as_str().to_ascii_lowercase(), v.to_owned());
+    // Only buffer body when a terminal handler needs it. Otherwise leave it in
+    // the Session so an Allow/proxy can still forward upstream.
+    let body = if method == Method::POST && uri.path() == PATH {
+        read_body(session).await
+    } else {
+        Bytes::new()
+    };
+
+    let mut builder = http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .version(version);
+    for (name, value) in headers.iter() {
+        builder = builder.header(name, value);
+    }
+
+    let mut req = builder.body(body).expect("request");
+    req.extensions_mut().insert(ClientIp(ip));
+    req
+}
+
+async fn read_body(session: &mut Session) -> Bytes {
+    let mut body = Vec::new();
+    while let Ok(Some(chunk)) = session.read_request_body().await {
+        body.extend_from_slice(&chunk);
+        if body.len() > MAX_BODY {
+            break;
         }
     }
-    
-    let body = unsafe { Body::new(inner as *mut Session) };
-    Transaction::new(meta, headers, method).with_body(body)
+    Bytes::from(body)
 }

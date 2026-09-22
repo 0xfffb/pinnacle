@@ -1,5 +1,5 @@
-mod cookie;
 mod captcha;
+mod cookie;
 
-pub use cookie::{CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH};
-pub use captcha::CaptchaChallengeService;
+pub use captcha::captcha;
+pub use cookie::{cookie, COOKIE_CID, COOKIE_PASS, PATH};

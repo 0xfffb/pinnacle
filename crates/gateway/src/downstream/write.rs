@@ -1,19 +1,26 @@
 use bytes::Bytes;
+use http::header::CONTENT_LENGTH;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
 use pingora::proxy::Session;
-use pinnacle_core::Reply;
+use pinnacle_core::Response;
 
-pub async fn reply(inner: &mut Session, reply: &Reply) -> Result<bool> {
-    let mut header = ResponseHeader::build(reply.status, None)?;
-    header.insert_header("Content-Type", reply.content_type)?;
-    header.insert_header("Content-Length", reply.body.len().to_string())?;
-    for cookie in &reply.cookies {
-        header.append_header("Set-Cookie", cookie)?;
+pub async fn response(session: &mut Session, res: Response<Bytes>) -> Result<bool> {
+    let (parts, body) = res.into_parts();
+    let mut header = ResponseHeader::build(parts.status.as_u16(), None)?;
+
+    for (name, value) in parts.headers.iter() {
+        if name == CONTENT_LENGTH {
+            continue;
+        }
+        let name = name.as_str().to_owned();
+        header.insert_header(name, value)?;
     }
-    inner.write_response_header(Box::new(header), false).await?;
-    inner
-        .write_response_body(Some(Bytes::copy_from_slice(&reply.body)), true)
+    header.insert_header("Content-Length", body.len().to_string())?;
+
+    session
+        .write_response_header(Box::new(header), false)
         .await?;
+    session.write_response_body(Some(body), true).await?;
     Ok(true)
 }
