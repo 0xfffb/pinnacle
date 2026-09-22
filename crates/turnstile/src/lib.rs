@@ -10,7 +10,7 @@ use tower::{ServiceBuilder, ServiceExt};
 use tracing::info;
 
 pub use pinnacle_core::{Disposition, Next, Reply, Transaction};
-pub use services::{banned, CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH};
+pub use services::{banned, CaptchaChallengeService, CookieChallengeService, COOKIE_CID, COOKIE_PASS, PATH};
 pub use state::TurnstileState;
 
 pub const LAYERS: &[&str] = &["challenge", "banned"];
@@ -34,6 +34,7 @@ impl Turnstile {
         let services = ServiceBuilder::new()
             .layer(AsLayer::new(CookieChallengeService::new(state.clone())))
             .layer(from_fn(state.clone(), banned))
+            .layer(AsLayer::new(CaptchaChallengeService::new(state.clone())))
             .service_fn(|_transaction: Transaction| async {
                 Ok::<_, Infallible>(Disposition::allow())
             });
