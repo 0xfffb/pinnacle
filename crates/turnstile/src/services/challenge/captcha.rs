@@ -14,8 +14,11 @@ impl CaptchaChallengeService {
     pub fn new(state: TurnstileState) -> Self {
         Self { state }
     }
+}
 
-    pub async fn forward(
+#[async_trait]
+impl LayerService for CaptchaChallengeService {
+    async fn forward(
         &self,
         transaction: Transaction,
         next: Next<Transaction, Disposition>,
@@ -26,19 +29,5 @@ impl CaptchaChallengeService {
             return Disposition::respond(Reply::html(202, "<h1>Captcha</h1>"));
         }
         next.forward(transaction).await
-    }
-}
-
-#[async_trait]
-impl LayerService for CaptchaChallengeService {
-    type Transaction = Transaction;
-    type Disposition = Disposition;
-
-    async fn call(
-        &self,
-        transaction: Transaction,
-        next: Next<Transaction, Disposition>,
-    ) -> Disposition {
-        self.forward(transaction, next).await
     }
 }

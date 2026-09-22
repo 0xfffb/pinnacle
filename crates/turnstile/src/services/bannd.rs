@@ -12,8 +12,11 @@ impl BannedService {
     pub fn new(state: TurnstileState) -> Self {
         Self { state }
     }
+}
 
-    pub async fn forward(
+#[async_trait]
+impl LayerService for BannedService {
+    async fn forward(
         &self,
         transaction: Transaction,
         next: Next<Transaction, Disposition>,
@@ -23,19 +26,5 @@ impl BannedService {
             return Disposition::respond(Reply::text(403, "store_banned"));
         }
         next.forward(transaction).await
-    }
-}
-
-#[async_trait]
-impl LayerService for BannedService {
-    type Transaction = Transaction;
-    type Disposition = Disposition;
-
-    async fn call(
-        &self,
-        transaction: Transaction,
-        next: Next<Transaction, Disposition>,
-    ) -> Disposition {
-        self.forward(transaction, next).await
     }
 }

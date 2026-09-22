@@ -30,7 +30,7 @@ where
     pub fn with<L, F>(mut self, factory: F) -> Self
     where
         F: FnOnce(St) -> L + 'static,
-        L: LayerService<Transaction = Transaction, Disposition = Disposition> + 'static,
+        L: LayerService + 'static,
     {
         self.wraps.push(Box::new(move |state, inner| {
             BoxCloneSyncService::new(AsLayer::new(factory(state)).layer(inner))

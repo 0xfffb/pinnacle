@@ -85,7 +85,11 @@ impl CookieChallengeService {
         }
     }
 
-    pub async fn forward(
+}
+
+#[async_trait]
+impl LayerService for CookieChallengeService {
+    async fn forward(
         &self,
         mut transaction: Transaction,
         next: Next<Transaction, Disposition>,
@@ -112,20 +116,6 @@ impl CookieChallengeService {
         } else {
             self.challenge(&ip)
         }
-    }
-}
-
-#[async_trait]
-impl LayerService for CookieChallengeService {
-    type Transaction = Transaction;
-    type Disposition = Disposition;
-
-    async fn call(
-        &self,
-        transaction: Transaction,
-        next: Next<Transaction, Disposition>,
-    ) -> Disposition {
-        self.forward(transaction, next).await
     }
 }
 

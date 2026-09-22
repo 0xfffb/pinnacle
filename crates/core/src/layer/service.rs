@@ -9,17 +9,15 @@ use tower::util::BoxCloneSyncService;
 use tower::{Layer, Service};
 
 use super::Next;
+use crate::{Disposition, Transaction};
 
 #[async_trait]
 pub trait LayerService: Clone + Send + Sync + 'static {
-    type Transaction: Send + 'static;
-    type Disposition: Send + 'static;
-
-    async fn call(
+    async fn forward(
         &self,
-        transaction: Self::Transaction,
-        next: Next<Self::Transaction, Self::Disposition>,
-    ) -> Self::Disposition;
+        transaction: Transaction,
+        next: Next<Transaction, Disposition>,
+    ) -> Disposition;
 }
 
 #[derive(Clone)]
@@ -50,30 +48,30 @@ pub struct Layered<L, S> {
     inner: S,
 }
 
-impl<L, S> Service<L::Transaction> for Layered<L, S>
+impl<L, S> Service<Transaction> for Layered<L, S>
 where
     L: LayerService,
-    S: Service<L::Transaction, Response = L::Disposition, Error = Infallible>
+    S: Service<Transaction, Response = Disposition, Error = Infallible>
         + Clone
         + Send
         + Sync
         + 'static,
     S::Future: Send + 'static,
 {
-    type Response = L::Disposition;
+    type Response = Disposition;
     type Error = Infallible;
-    type Future = BoxFuture<'static, Result<L::Disposition, Infallible>>;
+    type Future = BoxFuture<'static, Result<Disposition, Infallible>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, transaction: L::Transaction) -> Self::Future {
+    fn call(&mut self, transaction: Transaction) -> Self::Future {
         let logic = self.logic.clone();
         let inner = self.inner.clone();
         Box::pin(async move {
             Ok(logic
-                .call(
+                .forward(
                     transaction,
                     Next {
                         inner: BoxCloneSyncService::new(inner),
@@ -84,13 +82,13 @@ where
     }
 }
 
-pub struct FromFn<St, Transaction, Disposition, F> {
+pub struct FromFn<St, F> {
     state: St,
     f: F,
-    _phantom: PhantomData<fn(Transaction) -> Disposition>,
+    _phantom: PhantomData<fn()>,
 }
 
-impl<St, Transaction, Disposition, F> Clone for FromFn<St, Transaction, Disposition, F>
+impl<St, F> Clone for FromFn<St, F>
 where
     St: Clone,
     F: Clone,
@@ -105,12 +103,9 @@ where
 }
 
 #[async_trait]
-impl<St, Transaction, Disposition, F, Fut> LayerService
-    for FromFn<St, Transaction, Disposition, F>
+impl<St, F, Fut> LayerService for FromFn<St, F>
 where
     St: Clone + Send + Sync + 'static,
-    Transaction: Send + 'static,
-    Disposition: Send + 'static,
     F: Fn(St, Transaction, Next<Transaction, Disposition>) -> Fut
         + Clone
         + Send
@@ -118,10 +113,7 @@ where
         + 'static,
     Fut: Future<Output = Disposition> + Send + 'static,
 {
-    type Transaction = Transaction;
-    type Disposition = Disposition;
-
-    async fn call(
+    async fn forward(
         &self,
         transaction: Transaction,
         next: Next<Transaction, Disposition>,
@@ -130,14 +122,9 @@ where
     }
 }
 
-pub fn from_fn<St, Transaction, Disposition, F, Fut>(
-    state: St,
-    f: F,
-) -> AsLayer<FromFn<St, Transaction, Disposition, F>>
+pub fn from_fn<St, F, Fut>(state: St, f: F) -> AsLayer<FromFn<St, F>>
 where
     St: Clone + Send + Sync + 'static,
-    Transaction: Send + 'static,
-    Disposition: Send + 'static,
     F: Fn(St, Transaction, Next<Transaction, Disposition>) -> Fut
         + Clone
         + Send
