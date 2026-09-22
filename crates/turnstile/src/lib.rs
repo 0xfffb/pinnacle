@@ -1,4 +1,4 @@
-mod services;
+mod service;
 mod state;
 
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use pinnacle_core::{Bytes, Decision, Request, Stack};
 use tracing::info;
 
-pub use services::{COOKIE_CID, COOKIE_PASS, PATH};
+pub use service::{COOKIE_CID, COOKIE_PASS, PATH};
 pub use state::TurnstileState;
 
 pub const LAYERS: &[&str] = &["cookie", "captcha", "banned"];
@@ -29,9 +29,9 @@ impl Turnstile {
         info!("{log}");
 
         let stack = Stack::builder()
-            .layer(services::cookie)
-            .layer(services::captcha)
-            .layer(services::banned)
+            .layer(service::cookie)
+            .layer(service::captcha)
+            .layer(service::banned)
             .with_state(state);
 
         Self { stack }
