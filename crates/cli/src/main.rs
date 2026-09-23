@@ -67,6 +67,40 @@ enum Command {
         #[arg(long)]
         ip: String,
     },
+    /// Policy rules in effect
+    Rules,
+    /// Reload policy / challenge config
+    Reload,
+    /// Virtual hosts
+    Sites,
+    /// Search-engine / monitor allowlist
+    Allowlist,
+    /// Add an allowlist entry
+    Allow {
+        entry: String,
+    },
+    /// Add a denylist entry
+    Deny {
+        entry: String,
+    },
+    /// Rate-limit buckets
+    Ratelimit,
+    /// Live pass / challenge sessions
+    Sessions,
+    /// Why a request was challenged or blocked
+    Explain {
+        target: String,
+    },
+    /// Prometheus-style metrics dump
+    Metrics,
+    /// Effective runtime config
+    Config,
+    /// Control-plane audit trail
+    Audit,
+    /// Rotate challenge path / secrets
+    Rotate,
+    /// Cluster / edge peers
+    Peers,
 }
 
 impl Cli {
@@ -92,6 +126,20 @@ impl Cli {
             Command::Inspect { ip } => mock::inspect(&ip),
             Command::Ban { ip, reason } => mock::ban(&ip, &reason),
             Command::Unban { ip } => mock::unban(&ip),
+            Command::Rules => mock::rules(),
+            Command::Reload => mock::reload(),
+            Command::Sites => mock::sites(),
+            Command::Allowlist => mock::allowlist(),
+            Command::Allow { entry } => mock::allow(&entry),
+            Command::Deny { entry } => mock::deny(&entry),
+            Command::Ratelimit => mock::ratelimit(),
+            Command::Sessions => mock::sessions(),
+            Command::Explain { target } => mock::explain(&target),
+            Command::Metrics => mock::metrics(),
+            Command::Config => mock::config_show(),
+            Command::Audit => mock::audit(),
+            Command::Rotate => mock::rotate(),
+            Command::Peers => mock::peers(),
         };
         if let Err(e) = result {
             eprintln!("{e}");
