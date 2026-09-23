@@ -1,8 +1,10 @@
 mod config;
+mod dashboard;
+mod mock;
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use pingora::prelude::*;
 use pingora::proxy::http_proxy_service;
 use tracing::info;
@@ -15,32 +17,101 @@ use pinnacle_gateway::Gateway;
 #[derive(Parser, Debug)]
 #[command(name = "pinnacle", about = "Anti-bot gateway")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Path to TOML config
-    #[arg(long, default_value = "pinnacle.toml")]
+    #[arg(long, default_value = "pinnacle.toml", global = true)]
     config: PathBuf,
 
     /// Override listen address (host:port)
-    #[arg(long)]
+    #[arg(long, global = true)]
     listen: Option<String>,
 
     /// Override upstream address (host:port)
-    #[arg(long)]
+    #[arg(long, global = true)]
     upstream: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Run the gateway
+    Serve,
+    /// Live gateway dashboard (demo metrics)
+    Top,
+    /// Snapshot counters
+    Stats,
+    /// Process / listen / upstream
+    Status,
+    /// Probe gateway and upstream
+    Health,
+    /// List banned IPs
+    Bans,
+    /// Challenge / verify counters
+    Verify,
+    /// Recent challenge / ban / proxy events
+    Logs,
+    /// Per-IP challenge and pass state
+    Inspect {
+        ip: String,
+    },
+    /// Ban an IP (mock)
+    Ban {
+        #[arg(long)]
+        ip: String,
+        #[arg(long, default_value = "manual")]
+        reason: String,
+    },
+    /// Remove an IP from the ban list (mock)
+    Unban {
+        #[arg(long)]
+        ip: String,
+    },
 }
 
 impl Cli {
     fn run(self) {
+        let Cli {
+            command,
+            config,
+            listen,
+            upstream,
+        } = self;
+        let result = match command.unwrap_or(Command::Serve) {
+            Command::Serve => {
+                serve(config, listen, upstream);
+                return;
+            }
+            Command::Top => dashboard::run(),
+            Command::Stats => mock::stats(),
+            Command::Status => mock::status(),
+            Command::Health => mock::health(),
+            Command::Bans => mock::bans(),
+            Command::Verify => mock::verify(),
+            Command::Logs => mock::logs(),
+            Command::Inspect { ip } => mock::inspect(&ip),
+            Command::Ban { ip, reason } => mock::ban(&ip, &reason),
+            Command::Unban { ip } => mock::unban(&ip),
+        };
+        if let Err(e) = result {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn serve(config: PathBuf, listen: Option<String>, upstream: Option<String>) {
         init_log();
 
-        let mut cfg = Config::load(&self.config).unwrap_or_else(|e| {
+        let mut cfg = Config::load(&config).unwrap_or_else(|e| {
             eprintln!("{e}");
             std::process::exit(2);
         });
 
-        if let Some(listen) = self.listen {
+        if let Some(listen) = listen {
             cfg.listen = listen;
         }
-        if let Some(upstream) = self.upstream {
+        if let Some(upstream) = upstream {
             cfg.upstream = upstream;
         }
 
@@ -67,7 +138,6 @@ impl Cli {
 
         server.add_service(proxy);
         server.run_forever();
-    }
 }
 
 const BANNER: &str = r#"
