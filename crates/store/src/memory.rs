@@ -61,6 +61,21 @@ impl Store for MemoryStore {
         inner.bans.remove(key);
     }
 
+    fn ban_reason(&self, key: &str) -> Option<String> {
+        let inner = self.inner.lock().expect("store lock");
+        inner.bans.get(key).map(|r| r.reason.clone())
+    }
+
+    fn ban_count(&self) -> u32 {
+        let inner = self.inner.lock().expect("store lock");
+        inner.bans.len() as u32
+    }
+
+    fn list_bans(&self) -> Vec<(String, BanRecord)> {
+        let inner = self.inner.lock().expect("store lock");
+        inner.bans.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
     fn put_challenge(&self, key: &str, session: ChallengeSession) {
         let mut inner = self.inner.lock().expect("store lock");
         inner.challenges.insert(key.to_string(), session);
@@ -86,6 +101,11 @@ impl Store for MemoryStore {
     fn validate_pass(&self, key: &str, token: &str) -> bool {
         let inner = self.inner.lock().expect("store lock");
         inner.passed.get(key).is_some_and(|t| t == token)
+    }
+
+    fn has_pass(&self, key: &str) -> bool {
+        let inner = self.inner.lock().expect("store lock");
+        inner.passed.contains_key(key)
     }
 
     fn clear_passed(&self, key: &str) {

@@ -3,26 +3,29 @@ mod downstream;
 use async_trait::async_trait;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
-use pinnacle_turnstile::Turnstile;
+use pinnacle_core::{Bytes, Decision, Request};
 
 pub use downstream::Downstream;
 
-pub struct Gateway {
-    upstream: (String, u16),
-    turnstile: Turnstile,
+/// Anything that can decide what to do with a request.
+#[async_trait]
+pub trait Decider: Send + Sync {
+    async fn decide(&self, req: Request<Bytes>) -> Decision;
 }
 
-impl Gateway {
-    pub fn new(upstream: (String, u16), turnstile: Turnstile) -> Self {
-        Self {
-            upstream,
-            turnstile,
-        }
+pub struct Gateway<D> {
+    upstream: (String, u16),
+    decider: D,
+}
+
+impl<D: Decider> Gateway<D> {
+    pub fn new(upstream: (String, u16), decider: D) -> Self {
+        Self { upstream, decider }
     }
 }
 
 #[async_trait]
-impl ProxyHttp for Gateway {
+impl<D: Decider + 'static> ProxyHttp for Gateway<D> {
     type CTX = ();
 
     fn new_ctx(&self) {}
@@ -30,7 +33,7 @@ impl ProxyHttp for Gateway {
     async fn request_filter(&self, session: &mut Session, _ctx: &mut ()) -> Result<bool> {
         let mut downstream = Downstream::new(session);
         let req = downstream.request().await;
-        let decision = self.turnstile.decide(req).await;
+        let decision = self.decider.decide(req).await;
         downstream.apply(decision).await
     }
 

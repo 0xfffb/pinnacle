@@ -54,6 +54,12 @@ impl CookieChallengeService {
         let ep = &self.state.endpoints;
         let path = req.uri().path().to_owned();
         let ip = client_ip(&req).to_owned();
+
+        // 全局请求计数（排除 fingerprint 脚本端点本身）
+        if path != ep.path {
+            self.state.store.incr_request("__total__");
+            self.state.store.incr_request(&ip);
+        }
         let cookies = req
             .headers()
             .get(http::header::COOKIE)

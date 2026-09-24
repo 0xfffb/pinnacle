@@ -2,98 +2,115 @@ mod config;
 
 use std::path::PathBuf;
 
-use clap::Parser;
-use pingora::prelude::*;
-use pingora::proxy::http_proxy_service;
-use tracing::info;
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::EnvFilter;
+use anyhow::Context;
+use clap::{Parser, Subcommand};
 
 use config::Config;
-use pinnacle_gateway::Gateway;
+use pinnacle_control::ControlClient;
 
 #[derive(Parser, Debug)]
-#[command(name = "pinnacle", about = "Anti-bot gateway")]
+#[command(name = "pinnacle", about = "Pinnacle control CLI")]
 struct Cli {
-    /// Path to TOML config
     #[arg(long, default_value = "pinnacle.toml")]
     config: PathBuf,
 
-    /// Override listen address (host:port)
-    #[arg(long)]
-    listen: Option<String>,
-
-    /// Override upstream address (host:port)
-    #[arg(long)]
-    upstream: Option<String>,
+    #[command(subcommand)]
+    command: Command,
 }
 
-impl Cli {
-    fn run(self) {
-        init_log();
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Show request and ban counters
+    Stats,
 
-        let mut cfg = Config::load(&self.config).unwrap_or_else(|e| {
-            eprintln!("{e}");
-            std::process::exit(2);
-        });
+    /// Manage bans
+    Ban {
+        #[command(subcommand)]
+        sub: BanCmd,
+    },
 
-        if let Some(listen) = self.listen {
-            cfg.listen = listen;
-        }
-        if let Some(upstream) = self.upstream {
-            cfg.upstream = upstream;
-        }
-
-        let upstream = cfg.upstream_peer().unwrap_or_else(|e| {
-            eprintln!("invalid upstream: {e}");
-            std::process::exit(2);
-        });
-        if let Err(e) = cfg.validate_listen() {
-            eprintln!("invalid listen: {e}");
-            std::process::exit(2);
-        }
-
-        let upstream_addr = format!("{}:{}", upstream.0, upstream.1);
-        print_banner(&cfg.listen, &upstream_addr);
-
-        let mut server = Server::new(Some(Opt::default())).unwrap();
-        server.bootstrap();
-
-        let mut proxy = http_proxy_service(
-            &server.configuration,
-            Gateway::new(upstream, pinnacle_turnstile::Turnstile::new()),
-        );
-        proxy.add_tcp(&cfg.listen);
-
-        server.add_service(proxy);
-        server.run_forever();
-    }
+    /// Inspect a single IP
+    Inspect {
+        /// IP address to inspect
+        ip: String,
+    },
 }
 
-const BANNER: &str = r#"
-    ____  _                          __
-   / __ \(_)___  ____  ____ ________/ /__
-  / /_/ / / __ \/ __ \/ __ `/ ___/ / _ \
- / ____/ / / / / / / / /_/ / /__/ /  __/
-/_/   /_/_/ /_/_/ /_/\__,_/\___/_/\___/
-"#;
+#[derive(Subcommand, Debug)]
+enum BanCmd {
+    /// List all banned IPs
+    Ls,
 
-fn print_banner(listen: &str, upstream: &str) {
-    info!(
-        "\n{}\n  listen    {}\n  upstream  {}\n",
-        BANNER.trim_start_matches('\n'),
-        listen,
-        upstream
-    );
-}
+    /// Ban an IP address
+    Add {
+        /// IP address to ban
+        ip: String,
 
-fn init_log() {
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+        /// Reason for the ban
+        #[arg(short, long, default_value = "manual")]
+        reason: String,
+    },
+
+    /// Unban an IP address
+    Rm {
+        /// IP address to unban
+        ip: String,
+    },
 }
 
 fn main() {
-    Cli::parse().run();
+    let cli = Cli::parse();
+    let cfg = Config::load(&cli.config).unwrap_or_else(|_| Config::default());
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    if let Err(e) = rt.block_on(run(cfg, cli.command)) {
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run(cfg: Config, cmd: Command) -> anyhow::Result<()> {
+    let client = ControlClient::new(&cfg.control_socket);
+
+    match cmd {
+        Command::Stats => {
+            let s = client.stats().await.context("stats")?;
+            println!("requests : {}", s.requests_total);
+            println!("banned   : {}", s.banned_total);
+        }
+
+        Command::Ban { sub: BanCmd::Ls } => {
+            let res = client.bans().await.context("ban ls")?;
+            if res.bans.is_empty() {
+                println!("(no bans)");
+            } else {
+                for b in res.bans {
+                    println!("{:40}  {}", b.ip, b.reason);
+                }
+            }
+        }
+
+        Command::Ban { sub: BanCmd::Add { ip, reason } } => {
+            client.ban(&ip, &reason).await.context("ban add")?;
+            println!("banned {ip}");
+        }
+
+        Command::Ban { sub: BanCmd::Rm { ip } } => {
+            client.unban(&ip).await.context("ban rm")?;
+            println!("unbanned {ip}");
+        }
+
+        Command::Inspect { ip } => {
+            let r = client.inspect(&ip).await.context("inspect")?;
+            println!("ip           : {}", r.ip);
+            println!("banned       : {}", r.banned);
+            if let Some(reason) = r.ban_reason {
+                println!("ban reason   : {reason}");
+            }
+            println!("pass valid   : {}", r.pass_valid);
+            println!("requests     : {}", r.request_count);
+        }
+    }
+
+    Ok(())
 }

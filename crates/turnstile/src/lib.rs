@@ -4,7 +4,9 @@ mod state;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use pinnacle_core::{Bytes, Decision, Request, Stack};
+use pinnacle_gateway::Decider;
 use tracing::info;
 
 pub use state::{CookieEndpoint, TurnstileState};
@@ -15,6 +17,7 @@ pub const LAYERS: &[&str] = &["cookie", "captcha", "banned"];
 pub struct Turnstile {
     stack: Stack,
     endpoints: Arc<CookieEndpoint>,
+    state: TurnstileState,
 }
 
 impl Turnstile {
@@ -46,16 +49,23 @@ impl Turnstile {
             .layer(middleware::cookie)
             .layer(middleware::captcha)
             .layer(middleware::banned)
-            .with_state(state);
+            .with_state(state.clone());
 
-        Self { stack, endpoints }
+        Self { stack, endpoints, state }
     }
 
     pub fn endpoints(&self) -> &CookieEndpoint {
         &self.endpoints
     }
 
-    pub async fn decide(&self, req: Request<Bytes>) -> Decision {
+    pub fn state(&self) -> &TurnstileState {
+        &self.state
+    }
+}
+
+#[async_trait]
+impl Decider for Turnstile {
+    async fn decide(&self, req: Request<Bytes>) -> Decision {
         self.stack.decide(req).await
     }
 }

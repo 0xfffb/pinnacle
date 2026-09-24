@@ -12,4 +12,3 @@ http = "1"
 pingora = { version = "0.9", features = ["proxy"] }
 tracing = "0.1"
 pinnacle-core = { path = "../core" }
-pinnacle-turnstile = { path = "../turnstile" }

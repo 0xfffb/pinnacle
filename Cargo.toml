@@ -5,6 +5,7 @@ members = [
     "crates/store",
     "crates/turnstile",
     "crates/gateway",
+    "crates/control",
     "crates/cli",
 ]
 

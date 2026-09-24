@@ -41,6 +41,9 @@ pub trait Store: Send + Sync {
     fn is_banned(&self, key: &str) -> bool;
     fn ban(&self, key: &str, reason: &str);
     fn unban(&self, key: &str);
+    fn ban_reason(&self, key: &str) -> Option<String>;
+    fn ban_count(&self) -> u32;
+    fn list_bans(&self) -> Vec<(String, BanRecord)>;
     fn put_challenge(&self, key: &str, session: ChallengeSession);
     fn get_challenge(&self, key: &str) -> Option<ChallengeSession>;
     fn take_challenge(&self, key: &str) -> Option<ChallengeSession>;
@@ -48,5 +51,6 @@ pub trait Store: Send + Sync {
     fn issue_pass(&self, key: &str) -> String;
     /// Validate that `token` is the current pass token for `key`.
     fn validate_pass(&self, key: &str, token: &str) -> bool;
+    fn has_pass(&self, key: &str) -> bool;
     fn clear_passed(&self, key: &str);
 }

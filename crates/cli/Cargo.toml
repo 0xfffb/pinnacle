@@ -10,11 +10,14 @@ name = "pinnacle"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 pingora = { version = "0.9", features = ["proxy"] }
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "net"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pinnacle-control = { path = "../control" }
 pinnacle-turnstile = { path = "../turnstile" }
 pinnacle-gateway = { path = "../gateway" }
